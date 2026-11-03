@@ -28,3 +28,7 @@ hs_err_pid*
 # ignore railsim-expiriments results
 /results*/
 /output*/
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
