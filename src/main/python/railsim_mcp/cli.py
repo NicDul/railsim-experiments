@@ -27,10 +27,20 @@ def main():
         action="store_true",
         help="repackage an existing checkpoint without rerunning/resuming computation",
     )
+    parser.add_argument(
+        "--volume-range",
+        type=int,
+        nargs=3,
+        metavar=("FIRST", "LAST", "STEP"),
+        help="explicit inclusive sweep domain; overrides config volumes",
+    )
     args = parser.parse_args()
     try:
         settings = Settings.load(args.project, args.state_root)
         config = json.loads(args.config.read_text())
+        if args.volume_range:
+            config.pop("volumes", None)
+            config["volume_range"] = args.volume_range
         args.output.mkdir(parents=True, exist_ok=True)
         with (args.output / ".lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

@@ -1,6 +1,9 @@
 """Checkpointed UC1 orchestration. Search failures never certify simulator capacity."""
 
 from collections import Counter
+import copy
+from .budget import Budget, Exhausted
+from .guidance import catalogue, validate as validate_guidance
 import hashlib
 import json
 import os
@@ -53,6 +56,50 @@ def validate_config(config):
         value = config.setdefault(name, default)
         if type(value) not in (int, float) or not 0 < value <= 600:
             raise ValueError(f"{name} must be in (0,600]")
+    if "volume_range" in config:
+        if "volumes" in config:
+            raise ValueError("use volumes or volume_range, not both")
+        domain = config["volume_range"]
+        if (
+            not isinstance(domain, list)
+            or len(domain) != 3
+            or any(type(n) is not int for n in domain)
+            or not 4 <= domain[0] <= domain[1] <= 100
+            or domain[2] <= 0
+        ):
+            raise ValueError(
+                "volume_range requires [first,last,positive step] in 4..100"
+            )
+        config["volumes"] = list(range(domain[0], domain[1] + 1, domain[2]))
+        del config["volume_range"]
+    if config.get("guidance", "entry") not in ["entry", "resources"]:
+        raise ValueError("unknown guidance representation")
+    if (
+        type(config.get("guided_gap", 0)) is not int
+        or not 0 <= config.get("guided_gap", 0) <= 10
+    ):
+        raise ValueError("guided_gap must be 0..10")
+    gaps = config.get("direct_gaps", [0])
+    if (
+        not isinstance(gaps, list)
+        or not gaps
+        or any(type(g) is not int or not 0 <= g <= 10 for g in gaps)
+        or 0 not in gaps
+    ):
+        raise ValueError("direct_gaps must include zero; gaps in 0..10")
+    limits = config.get("limits", {})
+    if not isinstance(limits, dict) or set(limits) - {
+        "wall_seconds",
+        "cpu_seconds",
+        "simulations",
+        "model_calls",
+    }:
+        raise ValueError("invalid limits")
+    for key, value in limits.items():
+        if type(value) not in (int, float) or not 0 <= value <= 100000:
+            raise ValueError("invalid budget limit")
+        if key in ["simulations", "model_calls"] and type(value) is not int:
+            raise ValueError("run limits must be integers")
     volumes = config.get("volumes")
     if (
         not isinstance(volumes, list)
@@ -146,6 +193,7 @@ def assemble(report):
             if (
                 trial.get("solver", {}).get("status") == "INFEASIBLE"
                 and trial["scope"] == "all_orders"
+                and trial.get("min_gap", 0) == 0
             ):
                 exclusions.append(
                     dict(
@@ -221,6 +269,10 @@ class Workflow:
             from .routing import topology
 
             self.topology = topology(source, self.mode.variants)
+            self.topology["resource_order_guidance_supported"] = True
+            self.topology["guidance_note"] = (
+                "Per-resource cyclic grant orders; common-entry guidance remains unsupported."
+            )
             save(self.out / "topology-preflight.json", self.topology)
         self.code = {
             str(p.relative_to(settings.project)): digest(p)
@@ -292,13 +344,38 @@ class Workflow:
                     "Finite seeded simulation witness, not proof of infinite-horizon feasibility. No simulator-learned constraints used as proof assumptions.",
                 ],
             )
+        self.budget = Budget(
+            self.config.get("limits", {}), self.report.setdefault("budget", {})
+        )
         self.persist()
 
     def persist(self):
+        if hasattr(self, "budget"):
+            self.budget.refresh()
         save(self.out / "checkpoint.json", self.report)
 
     def calibrate(self):
         ref = self.report["calibration"]
+        if ref is None and self.config.get("calibration_from"):
+            source = Path(self.config["calibration_from"])
+            previous = json.loads(source.read_text())
+            old = previous["identity"]
+            if (
+                old["inputs"] != self.identity["inputs"]
+                or old["mode"] != self.identity["mode"]
+                or old["state"] != self.identity["state"]
+                or old["config"]["period_seconds"] != self.config["period_seconds"]
+                or old["config"]["seed"] != self.config["seed"]
+            ):
+                raise ValueError("calibration cache domain/physics/state mismatch")
+            ref = copy.deepcopy(previous["calibration"])
+            self.report["calibration"] = ref
+            self.report["calibration_origin"] = dict(
+                path=str(source),
+                sha256=digest(source),
+                reused="isolated profiles only; no search witnesses/orders/hints",
+            )
+            self.persist()
         if ref is None:
             workspace = "capacity-" + uuid.uuid4().hex[:12]
             root = self.ws.create(
@@ -336,6 +413,8 @@ class Workflow:
                 raise ValueError("calibration evidence changed")
         for variant, info in ref["variants"].items():
             if variant not in ref["baselines"]:
+                self.ws.timeout_seconds = self.budget.allowance("simulation", 300)
+                self.persist()
                 ref["baselines"][variant] = calibrate(
                     self.ws,
                     ref["workspace"],
@@ -378,6 +457,16 @@ class Workflow:
             "No tools; model prose is not a certificate.\n"
             + json.dumps(context, indent=2)
         )
+        if context.get("guidance_kind") == "resources":
+            prompt = (
+                "Propose cyclic grant orders on selected shared resources for this periodic railway timetable. "
+                'Return JSON {"proposals":[{"resource_orders":[{"resource":"name","trains":["t000","t001"]}]}]}. '
+                "Each chosen resource order must contain exactly every token in catalogue.resources[resource], once. "
+                "Choose a few bottleneck resources; other resource orders and all times stay free. Distinct resources may have different cyclic orders. "
+                "Do not invent train tokens or impose a false common network entry. Use simulator failure/solver feedback. No tools. "
+                "A single-order infeasibility is not a capacity proof.\n"
+                + json.dumps(context, indent=2)
+            )
         prefix = self.out / f"model-{index:03}"
         prefix.with_suffix(".prompt.txt").write_text(prompt)
         if self.model:
@@ -408,22 +497,69 @@ class Workflow:
                     )
                 ),
             )
+            if context.get("guidance_kind") == "resources":
+                schema = dict(
+                    type="object",
+                    additionalProperties=False,
+                    required=["proposals"],
+                    properties=dict(
+                        proposals=dict(
+                            type="array",
+                            items=dict(
+                                type="object",
+                                additionalProperties=False,
+                                required=["resource_orders"],
+                                properties=dict(
+                                    resource_orders=dict(
+                                        type="array",
+                                        items=dict(
+                                            type="object",
+                                            additionalProperties=False,
+                                            required=["resource", "trains"],
+                                            properties=dict(
+                                                resource=dict(type="string"),
+                                                trains=dict(
+                                                    type="array",
+                                                    items=dict(type="string"),
+                                                ),
+                                            ),
+                                        ),
+                                    )
+                                ),
+                            ),
+                        )
+                    ),
+                )
             return request_action(
                 identity,
                 prompt,
                 schema,
                 prefix,
-                self.config["model_seconds"],
+                self.model_timeout,
                 bounded_process,
                 lambda a, s: a,
             )[0]
         return {"proposals": []}
 
-    def trial(self, row, ref, options, products, platforms=None):
+    def trial(
+        self,
+        row,
+        ref,
+        options,
+        products,
+        platforms=None,
+        *,
+        resource_orders=None,
+        min_gap=0,
+    ):
         trial = dict(
             id=len(row["trials"]),
             status="running",
-            scope="one_order" if platforms is not None else "all_orders",
+            scope="one_order"
+            if platforms is not None or resource_orders
+            else "all_orders",
+            resource_orders=resource_orders,
+            min_gap=min_gap,
             products=products,
             platforms=platforms,
         )
@@ -450,19 +586,31 @@ class Workflow:
                         "ordered solver requires shared entry before platforms"
                     )
                 entry = candidates[0]
+            earlier = [
+                r
+                for r in self.report["rates"]
+                if r["volume"] < row["volume"] and r.get("witness")
+            ]
+            previous = max(earlier, key=lambda r: r["volume"], default=None)
+            trial["hint_origin_volume"] = previous["volume"] if previous else None
             solved = self.solver(
                 products,
                 options,
                 ref["windows"],
-                self.config["solver_seconds"],
+                self.budget.allowance(
+                    "solver", self.config["solver_seconds"], self.config["workers"]
+                ),
                 frozenset(),
                 self.config["workers"],
-                0,
+                min_gap,
+                no_overlap=self.config.get("resource_no_overlap", False),
                 period=self.config["period_seconds"],
                 seed=self.config["seed"],
                 order=products if platforms is not None else None,
                 platforms=platforms,
                 entry=entry,
+                resource_orders=resource_orders,
+                hint=previous["witness"]["pattern"] if previous else None,
             )
             trial["solver"] = solved
             trial["status"] = (
@@ -472,6 +620,8 @@ class Workflow:
             )
             self.persist()
             if solved["status"] in ("FEASIBLE", "OPTIMAL") and "pattern" in solved:
+                self.ws.timeout_seconds = self.budget.allowance("simulation", 300)
+                self.persist()
                 result, run = self.simulator(
                     self.ws,
                     ref["workspace"],
@@ -489,6 +639,9 @@ class Workflow:
                 )
                 if result["passed"]:
                     row["witness"] = dict(pattern=solved["pattern"], simulation=result)
+        except Exhausted as exc:
+            trial["status"] = "budget_exhausted"
+            trial["error"] = str(exc)
         except (ValueError, RuntimeError, OSError) as exc:
             trial["status"] = "execution_failed"
             trial["error"] = str(exc)
@@ -522,10 +675,17 @@ class Workflow:
                 self.report["rates"].append(row)
                 self.persist()
             products = [p for p, n in row["composition"].items() for _ in range(n)]
-            if not row["trials"]:
-                self.trial(row, ref, options, products)
+            for gap in self.config.get("direct_gaps", [0]):
+                if row["witness"]:
+                    break
+                if not any(
+                    t["scope"] == "all_orders" and t.get("min_gap", 0) == gap
+                    for t in row["trials"]
+                ):
+                    self.trial(row, ref, options, products, min_gap=gap)
             excluded = any(
                 t["scope"] == "all_orders"
+                and t.get("min_gap", 0) == 0
                 and t.get("solver", {}).get("status") == "INFEASIBLE"
                 for t in row["trials"]
             )
@@ -536,17 +696,23 @@ class Workflow:
                 if not row["witness"]
                 else "solver_first_pass_no_model_needed"
             )
-            if self.use_case == "UC2" and not row["witness"] and not excluded:
-                row["escalation_reason"] = (
-                    "shared_entry_order_guidance_unsupported_export_proof"
-                )
+            guidance_kind = self.config.get(
+                "guidance", "resources" if self.use_case == "UC2" else "entry"
+            )
+            eligible = catalogue(products, options, ref["windows"])
             while (
-                self.use_case == "UC1"
-                and not excluded
+                not excluded
                 and not row["witness"]
                 and len(row["rounds"]) < self.config["rounds"]
                 and self.config["runner"] != "none"
             ):
+                try:
+                    self.model_timeout = self.budget.allowance(
+                        "model", self.config["model_seconds"]
+                    )
+                except Exhausted as exc:
+                    row["escalation_reason"] = "budget_exhausted: " + str(exc)
+                    break
                 index = self.report["model_calls"]
                 self.report["model_calls"] += 1
                 record = dict(index=index, status="running", results=[])
@@ -560,6 +726,8 @@ class Workflow:
                     profiles_seconds=ref["windows"],
                     feedback=row["trials"],
                     prior_rounds=row["rounds"][:-1],
+                    guidance_kind=guidance_kind,
+                    resource_order_catalogue=eligible,
                 )
                 try:
                     response = self.ask(context, index)
@@ -571,16 +739,31 @@ class Workflow:
                         raise ValueError("response must contain proposals list")
                     for item in proposals[: self.config["proposals"]]:
                         try:
-                            sequence, platforms, key = proposal(
-                                item, row["composition"], options
-                            )
+                            resource_orders = None
+                            if guidance_kind == "resources":
+                                resource_orders, key = validate_guidance(
+                                    item, products, options, ref["windows"]
+                                )
+                                sequence, platforms = products, None
+                            else:
+                                sequence, platforms, key = proposal(
+                                    item, row["composition"], options
+                                )
                             if key in row["tried"]:
                                 record["results"].append(
                                     dict(status="duplicate", proposal=item)
                                 )
                                 continue
                             row["tried"].append(key)
-                            self.trial(row, ref, options, sequence, platforms)
+                            self.trial(
+                                row,
+                                ref,
+                                options,
+                                sequence,
+                                platforms,
+                                resource_orders=resource_orders,
+                                min_gap=self.config.get("guided_gap", 0),
+                            )
                             record["results"].append(
                                 dict(status="attempted", trial=row["trials"][-1]["id"])
                             )
@@ -616,6 +799,7 @@ class Workflow:
             )
             self.persist()
         self.report["bounds"] = assemble(self.report)
+        self.report["bounds"]["requested_volumes"] = self.config["volumes"]
         self.persist()
         save(self.out / "bounds-report.json", self.report)
         self.export()

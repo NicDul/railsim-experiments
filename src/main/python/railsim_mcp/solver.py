@@ -19,6 +19,8 @@ def solve(
     order=None,
     platforms=None,
     entry=None,
+    resource_orders=None,
+    hint=None,
 ):
     """Any departure and platform variant per train; exclusive holds at least min_gap seconds apart.
 
@@ -40,7 +42,12 @@ def solve(
         for v, x in choice[i].items():
             if any(r - g + min_gap > period for _, g, r in windows[v].values()):
                 model.Add(x == 0)
-        if order is None and i and products[i] == products[i - 1]:
+        if (
+            order is None
+            and not resource_orders
+            and i
+            and products[i] == products[i - 1]
+        ):
             model.Add(departure[i] > departure[i - 1])
 
     if order is not None:
@@ -64,6 +71,10 @@ def solve(
             )
         for i in range(1, n):
             model.Add(arrivals[i] > arrivals[i - 1])
+
+    from .guidance import constrain
+
+    constrain(model, departure, choice, windows, resource_orders, period)
 
     def apart(i, j, first, second, when):
         # first (window of train i) and second (window of train j) never overlap, in any period:
@@ -112,6 +123,19 @@ def solve(
                         )
         for intervals in holds.values():
             model.AddNoOverlap(intervals)
+    if hint:
+        by_group = {}
+        for group, t, v in hint:
+            by_group.setdefault(group, []).append((t, v))
+        for group in by_group:
+            by_group[group].sort()
+        for i, group in enumerate(products):
+            if by_group.get(group):
+                t, v = by_group[group].pop(0)
+                if 0 <= t < period and v in choice[i]:
+                    model.AddHint(departure[i], t)
+                    for variant, x in choice[i].items():
+                        model.AddHint(x, int(variant == v))
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = seconds
     solver.parameters.num_workers = workers

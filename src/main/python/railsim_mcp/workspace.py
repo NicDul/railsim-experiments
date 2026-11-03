@@ -54,6 +54,7 @@ class ScenarioWorkspace:
 
     def __init__(self, resource_root: Path, workspace_root: Path, *,
                  project_root: Path | None = None, runs_root: Path | None = None):
+        self.timeout_seconds = 300
         self.resource_root = resource_root.resolve()
         self.workspace_root = workspace_root.resolve()
         self.project_root = project_root.resolve() if project_root else None
@@ -667,7 +668,7 @@ class ScenarioWorkspace:
             process = subprocess.Popen(command, cwd=self.project_root, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                         text=True, shell=False, env=environment, start_new_session=True)
             try:
-                stdout, stderr = process.communicate(timeout=300)
+                stdout, stderr = process.communicate(timeout=self.timeout_seconds)
             except BaseException as exc:
                 os.killpg(process.pid, signal.SIGTERM)
                 try:
@@ -676,7 +677,7 @@ class ScenarioWorkspace:
                     os.killpg(process.pid, signal.SIGKILL)
                     process.communicate()
                 if isinstance(exc, subprocess.TimeoutExpired):
-                    raise WorkspaceError("single simulation exceeded the 300 second execution bound") from exc
+                    raise WorkspaceError("single simulation exceeded its configured execution bound") from exc
                 raise
             completed = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
             if completed.returncode != 0:
