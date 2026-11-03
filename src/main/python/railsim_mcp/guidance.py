@@ -95,3 +95,38 @@ def constrain(model, departure, choice, windows, resource_orders, period):
             phases.append(phase)
         for a, b in zip(phases, phases[1:]):
             model.Add(b > a)
+
+
+def valid_parts(value, products, options, windows):
+    """Accept independently valid resource restrictions, reporting every dropped row.
+
+    Removing a malformed restriction never creates a proof: guided results still
+    concern the accepted subset only. An entirely invalid proposal is rejected.
+    """
+    if not isinstance(value, dict) or not isinstance(
+        value.get("resource_orders"), list
+    ):
+        raise ValueError("requires resource_orders list")
+    accepted = []
+    errors = []
+    seen = set()
+    for index, row in enumerate(value["resource_orders"]):
+        try:
+            clean, _ = validate({"resource_orders": [row]}, products, options, windows)
+            if clean[0]["resource"] in seen:
+                raise ValueError("duplicate resource")
+            seen.add(clean[0]["resource"])
+            accepted.extend(clean)
+        except ValueError as exc:
+            errors.append(
+                dict(
+                    index=index,
+                    status="invalid_resource_order",
+                    error=str(exc),
+                    source=row,
+                )
+            )
+    if not accepted:
+        raise ValueError("no valid resource orders: " + json.dumps(errors))
+    accepted.sort(key=lambda row: row["resource"])
+    return accepted, json.dumps(accepted, sort_keys=True), errors

@@ -3,7 +3,7 @@
 from collections import Counter
 import copy
 from .budget import Budget, Exhausted
-from .guidance import catalogue, validate as validate_guidance
+from .guidance import catalogue, valid_parts as validate_guidance
 import hashlib
 import json
 import os
@@ -752,9 +752,19 @@ class Workflow:
                         try:
                             resource_orders = None
                             if guidance_kind == "resources":
-                                resource_orders, key = validate_guidance(
-                                    item, products, options, ref["windows"]
+                                resource_orders, key, dropped_orders = (
+                                    validate_guidance(
+                                        item, products, options, ref["windows"]
+                                    )
                                 )
+                                if dropped_orders:
+                                    record["results"].append(
+                                        dict(
+                                            status="partial_resource_proposal",
+                                            dropped=dropped_orders,
+                                            accepted=resource_orders,
+                                        )
+                                    )
                                 sequence, platforms = products, None
                             else:
                                 sequence, platforms, key = proposal(

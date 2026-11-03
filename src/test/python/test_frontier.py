@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 from railsim_mcp.budget import Budget, Exhausted
-from railsim_mcp.guidance import catalogue, validate
+from railsim_mcp.guidance import catalogue, validate, valid_parts
 from railsim_mcp.solver import solve
 from railsim_mcp.capacity import Workflow, assemble, validate_config
 from railsim_mcp.configuration import Settings
@@ -237,3 +237,27 @@ class ResourceOrderTests(unittest.TestCase):
             self.assertTrue(solver.call_args.kwargs["resource_orders"])
             self.assertEqual(report["rates"][0]["trials"][1]["scope"], "one_order")
             self.assertEqual(report["bounds"]["search_lower_bound_trains_per_hour"], 16)
+
+
+class PartialGuidanceTests(unittest.TestCase):
+    def test_valid_resource_restrictions_survive_an_invalid_independent_row(self):
+        products = ["A", "B", "C"]
+        options = {p: [p] for p in products}
+        windows = {p: {"x": (0, 0, 5), "y": (0, 10, 15)} for p in products}
+        proposal = {
+            "resource_orders": [
+                {"resource": "x", "trains": ["t000", "t002", "t001"]},
+                {"resource": "y", "trains": ["t000", "t001", "t007"]},
+            ]
+        }
+        accepted, key, errors = valid_parts(proposal, products, options, windows)
+        self.assertEqual([r["resource"] for r in accepted], ["x"])
+        self.assertEqual(errors[0]["index"], 1)
+        self.assertEqual(errors[0]["status"], "invalid_resource_order")
+        with self.assertRaises(ValueError):
+            valid_parts(
+                {"resource_orders": [proposal["resource_orders"][1]]},
+                products,
+                options,
+                windows,
+            )
