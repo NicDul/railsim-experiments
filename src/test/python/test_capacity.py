@@ -171,6 +171,26 @@ class BoundsTests(unittest.TestCase):
         self.assertIsNone(assemble({"rates": rows})["maximum"])
 
 
+class ReplayBoundsTests(unittest.TestCase):
+    def test_validated_replay_is_an_available_bound_with_explicit_origin(self):
+        report = dict(
+            identity={"config": {"period_seconds": 1800}},
+            rates=[],
+            replays=[
+                dict(
+                    pattern=[["FV", 0, "FV_P1"]] * 4,
+                    simulation={"passed": True},
+                    evidence_label="explicit replay",
+                )
+            ],
+        )
+        result = assemble(report)
+        self.assertEqual(result["simulator_lower_bound_trains_per_hour"], 8)
+        self.assertEqual(result["best_witness_origin"], "explicit_replay")
+        self.assertIsNone(result["search_lower_bound_trains_per_hour"])
+        self.assertIsNone(result["maximum"])
+
+
 class WorkflowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()

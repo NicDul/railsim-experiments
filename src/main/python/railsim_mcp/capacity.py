@@ -117,7 +117,20 @@ def occupation_exclusion(counts, options, windows, period):
 
 def assemble(report):
     passing = [r for r in report["rates"] if r.get("witness")]
-    best = max(passing, key=lambda r: r["volume"], default=None)
+    search_best = max(passing, key=lambda r: r["trains_per_hour"], default=None)
+    candidates = [
+        dict(rate=r["trains_per_hour"], witness=r["witness"], origin="search")
+        for r in passing
+    ]
+    for replay in report.get("replays", []):
+        if replay["simulation"]["passed"]:
+            rate = (
+                3600
+                * len(replay["pattern"])
+                / report["identity"]["config"]["period_seconds"]
+            )
+            candidates.append(dict(rate=rate, witness=replay, origin="explicit_replay"))
+    best = max(candidates, key=lambda r: r["rate"], default=None)
     exclusions = []
     for row in report["rates"]:
         if row.get("occupation", {}).get("excluded_resources"):
@@ -143,7 +156,11 @@ def assemble(report):
                     )
                 )
     return dict(
-        simulator_lower_bound_trains_per_hour=best["trains_per_hour"] if best else None,
+        simulator_lower_bound_trains_per_hour=best["rate"] if best else None,
+        search_lower_bound_trains_per_hour=search_best["trains_per_hour"]
+        if search_best
+        else None,
+        best_witness_origin=best["origin"] if best else None,
         best_witness=best["witness"] if best else None,
         fixed_profile_exclusions=exclusions,
         unresolved_volumes=[
@@ -699,6 +716,7 @@ def export_existing(settings, config, output):
     exporter.config = config
     exporter.use_case = config.get("use_case", "UC1")
     report["exporter_sha256"] = digest(Path(__file__))
+    report["bounds"] = assemble(report)
     Workflow.export(exporter)
     save(output / "bounds-report.json", report)
     return report

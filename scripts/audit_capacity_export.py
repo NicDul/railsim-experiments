@@ -20,7 +20,12 @@ def audit(root):
     ref = report["calibration"]
     passing = 0
     exclusions = 0
-    for row in report["rates"]:
+    rows = report["rates"] + [
+        dict(witness=r, trains_per_hour=3600 * len(r["pattern"]) / period)
+        for r in report.get("replays", [])
+        if r["simulation"]["passed"]
+    ]
+    for row in rows:
         for resource, claimed in (
             row.get("occupation", {}).get("resource_minimum_seconds", {}).items()
         ):
@@ -75,7 +80,7 @@ def audit(root):
                     )
             passing += 1
     lower = max(
-        (row["trains_per_hour"] for row in report["rates"] if row.get("witness")),
+        (row["trains_per_hour"] for row in rows if row.get("witness")),
         default=None,
     )
     assert report["bounds"]["simulator_lower_bound_trains_per_hour"] == lower
