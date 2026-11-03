@@ -15,7 +15,7 @@ import java.util.concurrent.Callable;
 
 @Log4j2
 @CommandLine.Command(name = "railsim-scenario", mixinStandardHelpOptions = true, subcommands = {
-        RunRailsimScenario.RunCommand.class, RunRailsimScenario.ReconstructCommand.class})
+        RunRailsimScenario.RunCommand.class, RunRailsimScenario.ReconstructCommand.class, RunSingleSimulation.class})
 public class RunRailsimScenario {
 
     static void main(String[] args) {
