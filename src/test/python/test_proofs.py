@@ -1,4 +1,4 @@
-"""Regression tests for the UC1 capacity proofs (CP-SAT/arithmetic only, about 15 s)."""
+"""Regression tests for the UC1 capacity proofs (CP-SAT/arithmetic only; runtime depends on solver and host)."""
 import json
 import shutil
 import subprocess
@@ -35,7 +35,7 @@ class Bb3FvStopProofTest(unittest.TestCase):
                           audit['positive_cycle_certificates'], audit['survivors']),
                          ('PASS', 137280, 137130, 150))
 
-    def test_survivors_are_infeasible_with_all_platforms_free(self):
+    def test_first_ten_survivors_are_infeasible_with_all_platforms_free(self):
         folder = PROOFS / 'bb3-fv-stop'
         words = (folder / 'surviving-type-orders.txt').read_text().split()
         self.assertEqual(len(words), 150)

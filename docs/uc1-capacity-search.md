@@ -40,8 +40,18 @@ RAILSIM_PROJECT_ROOT=$(cd ../../..; pwd) PYTHONPATH=../../main/python:. \
   python -m unittest discover -s . -t .      # needs mcp, pydantic, ortools, anthropic
 ```
 
-Integration tests under `src/test/integration` run real simulations and are not
-part of this set.
+Integration tests under `src/test/integration` exercise the stdio protocol,
+synthetic retained-run analysis and real Java simulation. Build the Java runner
+first, then run them with an isolated external state directory:
+
+```sh
+./mvnw --batch-mode --no-transfer-progress verify
+RAILSIM_PROJECT_ROOT="$PWD" RAILSIM_STATE_ROOT=/tmp/railsim-integration-tests \
+  uv run --extra solver --extra llm python -m unittest discover -s src/test/integration
+```
+
+The proof regression suite samples ten survivor solves; the complete 150-case
+checks in both formulations are the separate commands in `proofs/README.md`.
 
 ## Assumptions behind every limit
 

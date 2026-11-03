@@ -44,3 +44,6 @@ __pycache__/
 /proofs/**/delivery-audit.json
 /proofs/window-bounds/fv_pass/
 /proofs/window-bounds/fv_stop/
+
+# Maven Shade build artifact
+/dependency-reduced-pom.xml
