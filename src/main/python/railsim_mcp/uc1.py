@@ -117,5 +117,3 @@ def analyse(run, traces, baselines):
                              'overlapping_resource_candidates': candidates,
                              'causality': 'temporal resource-overlap candidates, not proven dispatcher causality'})
     return findings
-
-
