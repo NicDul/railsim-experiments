@@ -1,4 +1,4 @@
-# Capacity workflow validation, 3 November 2026
+# Initial capacity workflow validation, 3 November 2026
 
 Implementation starts at `392da4d`; the original branch remains preserved. UC1 core before UC2 adaptation: `e73258d`. Main example computations began at `415f716`; reports retain their actual code/input hashes and revision. Export fixes and available-replay bounds were tested at `946276d`, including a fresh BB1 run and idempotent resume. Later documentation changes do not change the computational core.
 
@@ -68,3 +68,5 @@ The supplied local delivery includes exact executed invocations, configuration/i
 Finite seeded terminal-delay checks do not prove indefinite timetable feasibility, model necessity for every simulator trajectory, headway admissibility, or universal capacity. Headway diagnostics remain distinct from the raw zero-terminal-delay gate. No autonomous proof agent is implemented; exported prompts require a separately checked proof. No blind benchmark is claimed: prior UC1/BB2 results were known and used only as labelled regression evidence. The manuscript remains historical and conditional.
 
 The archive inventory preserves prior branches/checkouts, linked worktrees, nine pre-existing dirty cache files and historical runs. No push, PR, publication, remote deletion, MCP setup or secret/configuration change occurred. Sentinel review remains required before eventual publication.
+
+The subsequent bounded frontier experiments and UC2 per-resource hybrid checks are recorded in [frontier validation](frontier-validation.md). The results above are preserved initial smoke/replay checks.
