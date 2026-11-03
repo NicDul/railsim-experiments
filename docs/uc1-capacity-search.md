@@ -23,3 +23,7 @@ Each rate spends at most one unrestricted solve plus `rounds * proposals` ordere
 `proof-handoff/` contains `prompt.md`, report, integer resource profiles, frozen simulator inputs, raw compressed events and a SHA-256 manifest. Pass the directory to an external LLM for a proposed proof/checker. Prose is not a certificate. Original absolute paths remain provenance; portable adjacent copies are the evidence. Proof checking remains separate. Explicit witness regression uses `--replay-witness FILE` with a JSON object containing `building_block`, `mode`, `period_seconds`, `pattern` and optional `source`; it is labelled replay, not search discovery.
 
 The article remains a historical research draft with conditional claims. Its retained hybrid trials did not establish maxima. See the delivered validation report for exact new demonstration results and limitations.
+
+UC2 transfer testing uses `use_case: UC2` and the declared product/flow/direction allocation. Volume is per direction; total rate is reported separately. Original network/configuration stay unchanged. There is no platform selection or shared-entry order guidance for UC2. See [measured validation and limits](capacity-validation.md).
+
+Use `--export-only` to repackage a recorded checkpoint after exporter fixes without rerunning simulation; computational provenance is preserved. Normal resume remains strict about code/configuration/state hashes. Bounds report both the search-only lower bound and any larger explicitly replayed witness, with its origin.
