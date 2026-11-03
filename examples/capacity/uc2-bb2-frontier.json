@@ -1,0 +1,32 @@
+{
+  "use_case": "UC2",
+  "building_block": "BB2",
+  "mode": "TRANSIT/TRUNK",
+  "period_seconds": 1800,
+  "volume_range": [
+    8,
+    24,
+    1
+  ],
+  "seed": 4711,
+  "workers": 1,
+  "solver_seconds": 45,
+  "direct_gaps": [
+    1,
+    0
+  ],
+  "resource_no_overlap": true,
+  "guidance": "resources",
+  "guided_gap": 1,
+  "rounds": 1,
+  "proposals": 2,
+  "runner": "codex",
+  "model_seconds": 120,
+  "limits": {
+    "wall_seconds": 1000,
+    "cpu_seconds": 900,
+    "simulations": 22,
+    "model_calls": 1
+  },
+  "model": "gpt-6-luna"
+}
