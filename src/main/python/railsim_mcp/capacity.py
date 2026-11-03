@@ -100,6 +100,11 @@ def validate_config(config):
             raise ValueError("invalid budget limit")
         if key in ["simulations", "model_calls"] and type(value) is not int:
             raise ValueError("run limits must be integers")
+    if "guided_solver_seconds" in config and (
+        type(config["guided_solver_seconds"]) not in (int, float)
+        or not 0 < config["guided_solver_seconds"] <= 600
+    ):
+        raise ValueError("guided_solver_seconds must be in (0,600]")
     volumes = config.get("volumes")
     if (
         not isinstance(volumes, list)
@@ -598,7 +603,13 @@ class Workflow:
                 options,
                 ref["windows"],
                 self.budget.allowance(
-                    "solver", self.config["solver_seconds"], self.config["workers"]
+                    "solver",
+                    self.config.get(
+                        "guided_solver_seconds", self.config["solver_seconds"]
+                    )
+                    if resource_orders or platforms is not None
+                    else self.config["solver_seconds"],
+                    self.config["workers"],
                 ),
                 frozenset(),
                 self.config["workers"],
