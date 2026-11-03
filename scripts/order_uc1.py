@@ -1,43 +1,8 @@
-"""Two-step UC1 timetabling prototype: first the order of trains, then the exact times (experiment).
-
-Works on a solve_uc1_binding.py variants file (binding platforms, no rerouting).
-
-Every train, whatever its platform, crosses the single-track entry section (resources used by every
-variant before the station) and exit section (after it). On a single-track section trains keep
-their order, and a train b following a can enter it no earlier than
-    h(a, b) = max over the section's resources of (release_a - grant_b) + gap
-seconds after a, counted from departure. Around one period these headways add up to exactly
-the period, so for any cyclic order the sum of consecutive headways must be <= 1800 s.
-
-1. bound: the cheapest cyclic order on each section (a small flow problem; platform split free).
-   If it exceeds the period on either section, the rate is impossible, for every timetable.
-2. orders: list every cyclic order of train types at the entry whose headway sum can still fit
-   (depth-first, pruned with the same sums). `--forbid` drops orders containing a given pattern.
-3. times: for each remaining order, cheapest first, CP-SAT chooses the exact departures and
-   platforms with that entry order fixed (1 s gap, then 0 s); a solution is simulated.
-
-  order_uc1.py --variants DIR/bb3-mainline-fv_pass-variants.json --mode MAINLINE/FV_PASS \\
-      --volume 19 --project SIM --state-root STATE --output DIR/order-bb3-mainline-fv_pass-38.json
-"""
-import argparse
-import itertools
-import json
-import os
-from pathlib import Path
-import time
-
-from ortools.sat.python import cp_model
-
-from railsim_mcp import server
-from railsim_mcp.configuration import Settings
-from railsim_mcp.search import SIM_JVM_OPTIONS
+"""Historical proof helper imports; use railsim-capacity for search."""
+from railsim_mcp.profiles import reference_windows
 from railsim_mcp.uc1 import PERIOD
-from railsim_mcp.uc1_modes import UC1Mode, rounded_counts
-from railsim_mcp.workspace import ScenarioWorkspace
-from solve_uc1_cpsat import reference_windows
-from solve_uc1_platforms import simulate
-
-
+from ortools.sat.python import cp_model
+import time
 def sections(windows):
     """Resources every variant uses, split into before (entry) and after (exit) the platforms."""
     common = set.intersection(*(set(w) for w in windows.values())) - {r for w in windows.values() for r in w
@@ -46,10 +11,8 @@ def sections(windows):
     entry = {r for r in common if all(windows[v][r][1] <= platform_grant[v] for v in windows)}
     return sorted(entry), sorted(common - entry)
 
-
 def headway(windows, section, a, b, gap):
     return max(windows[a][r][2] - windows[b][r][1] for r in section) + gap
-
 
 def bound(options, counts, windows, section, gap):
     """Cheapest cyclic order on one section; platform split free. A lower bound on the period used."""
@@ -70,12 +33,10 @@ def bound(options, counts, windows, section, gap):
     return dict(seconds=round(solver.ObjectiveValue()), proven=status == cp_model.OPTIMAL,
                 platform_split={v: solver.Value(n[v]) for v in variants if solver.Value(n[v])})
 
-
 def type_headways(options, windows, section, gap):
     """Smallest headway between two train types over all platform choices (keeps the bound valid)."""
     return {(p, q): min(headway(windows, section, a, b, gap) for a in options[p] for b in options[q])
             for p in options for q in options}
-
 
 def orders(counts, h, limit, forbid=()):
     """Cyclic type orders (canonical rotation) whose headway sum fits in the period, cheapest first."""
@@ -114,7 +75,6 @@ def orders(counts, h, limit, forbid=()):
                 left[q] += 1
     walk(0)
     return sorted(found), visited
-
 
 def solve_order(order, products, options, windows, entry, gap, seconds, workers, platforms=None, slack=False):
     """Exact departures and platforms with the entry order fixed; None if this order cannot work.
@@ -218,99 +178,3 @@ def solve_order(order, products, options, windows, entry, gap, seconds, workers,
                                           resource=resource, overlap_seconds=over))
             result['conflicts'] = sorted(conflicts, key=lambda c: -c['overlap_seconds'])[:6]
     return result
-
-
-def main():
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument('--variants', type=Path, required=True)
-    parser.add_argument('--mode', required=True)
-    parser.add_argument('--volume', type=int, required=True, help='trains per 30 minutes')
-    parser.add_argument('--project', required=True)
-    parser.add_argument('--state-root', required=True)
-    parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--max-orders', type=int, default=2_000_000, help='stop listing orders after this many')
-    parser.add_argument('--try-orders', type=int, default=0, help='orders to try in step 3 (0: none)')
-    parser.add_argument('--seconds', type=float, default=20, help='CP-SAT limit per order')
-    parser.add_argument('--workers', type=int, default=8)
-    parser.add_argument('--forbid', nargs='*', default=[], help='type patterns such as GG that no order may contain')
-    parser.add_argument('--most-mixed-first', action='store_true',
-                        help='try orders with the most changes of train type first')
-    parser.add_argument('--seed', type=int, default=4711)
-    args = parser.parse_args()
-    settings = Settings.load(args.project, args.state_root)
-    ws = ScenarioWorkspace(settings.project/'src/main/resources/scenarios', settings.state/'workspaces',
-                           project_root=settings.project, runs_root=settings.state/'runs')
-    server.WORKSPACES = ws
-    os.environ['MAVEN_OPTS'] = (os.environ.get('MAVEN_OPTS', '')+' '+SIM_JVM_OPTIONS).strip()
-    reference = json.loads(args.variants.read_text())
-    windows = reference_windows(ws.runs_root, reference['baselines'])
-    options = {}
-    for variant, info in reference['variants'].items():
-        options.setdefault(info['product'], []).append(variant)
-    mode = UC1Mode.load(settings.project/'src/main/resources/scenarios/use_case_1/uc1_operational_plan.json', args.mode)
-    counts = rounded_counts(args.volume, mode.shares)
-    counts = {p: k for p, k in counts.items() if k}
-    products = [p for p in sorted(counts) for _ in range(counts[p])]
-    entry, exit_ = sections(windows)
-    single_platform = all(len(options[p]) == 1 for p in counts)
-    letters = {p: p[0] for p in counts}
-    report = dict(variants=str(args.variants), mode=mode.id, volume=args.volume, trains_per_hour=2*args.volume,
-                  counts=counts, entry_section=entry, exit_section=exit_, forbid=args.forbid)
-    started = time.monotonic()
-
-    # 1. bound
-    checked = [('entry', entry), ('exit', exit_)]
-    if single_platform:  # no overtaking anywhere: the whole shared path keeps the order
-        checked.append(('path', sorted(set(entry) | set(exit_) | {r for w in windows.values() for r in w})))
-    report['bound'] = {name: {gap: bound(options, counts, windows, section, gap) for gap in (0, 1)}
-                       for name, section in checked}
-    print(json.dumps(dict(step='bound', **report['bound'])), flush=True)
-    if any(b[0]['seconds'] > PERIOD and b[0]['proven'] for b in report['bound'].values()):
-        report['verdict'] = 'impossible: the cheapest order on a single-track section needs more than 1800 s'
-    else:
-        # 2. orders at the entry (types only; platforms and exact times are left to step 3)
-        h = type_headways(options, windows, entry, 0)
-        h = {(letters[p], letters[q]): v for (p, q), v in h.items()}
-        found, visited = orders({letters[p]: k for p, k in counts.items()}, h, args.max_orders, args.forbid)
-        report['orders'] = dict(listed=len(found), complete=len(found) < args.max_orders, nodes_visited=visited,
-                                list_seconds=round(time.monotonic()-started, 1),
-                                cheapest=found[:10], most_expensive=found[-3:])
-        print(json.dumps(dict(step='orders', **{k: v for k, v in report['orders'].items() if k != 'most_expensive'})), flush=True)
-        if not found and report['orders']['complete']:
-            report['verdict'] = 'impossible: no order of train types fits at the entry'
-        # 3. times for the cheapest orders
-        report['tries'] = []
-        if args.most_mixed_first:
-            found.sort(key=lambda o: (-sum(a != b for a, b in zip(o[1], o[1][1:]+o[1][0])), o[0]))
-        reference_terminals = {v: b['terminal'] for v, b in reference['baselines'].items()}
-        for total, sequence in found[:args.try_orders]:
-            order = [next(p for p in counts if letters[p] == c) for c in sequence]
-            for gap in (0, 1):  # 0 s first: if even that is impossible, so is 1 s
-                row = dict(order=sequence, entry_headway_sum=total, gap=gap,
-                           **solve_order(order, products, options, windows, entry, gap, args.seconds, args.workers))
-                if 'pattern' in row:
-                    row['simulation'], _ = simulate(ws, reference['workspace'], row['pattern'], reference_terminals, args.seed)
-                report['tries'].append(row)
-                print(json.dumps({k: v for k, v in row.items() if k != 'pattern'}), flush=True)
-                if 'pattern' not in row or row['simulation']['passed']:
-                    break
-            if report['tries'][-1].get('simulation', {}).get('passed'):
-                report['verdict'] = f"possible: order {sequence} passes the simulator"
-                break
-    tries = report.get('tries', [])
-    if 'verdict' not in report and tries and 'orders' in report:
-        settled = {t['order'] for t in tries if t['status'] == 'INFEASIBLE' and t['gap'] == 0}
-        tried = {t['order'] for t in tries}
-        if report['orders']['complete'] and len(settled) == report['orders']['listed']:
-            report['verdict'] = 'impossible: every order of train types was ruled out'
-        else:
-            report['verdict'] = (f"open: {len(settled)} of {report['orders']['listed']} orders ruled out, "
-                                 f"{len(tried - settled)} undecided or late in the simulator, "
-                                 f"{report['orders']['listed'] - len(tried)} not tried")
-    report['elapsed_seconds'] = round(time.monotonic()-started)
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2)+'\n')
-
-
-if __name__ == '__main__':
-    main()

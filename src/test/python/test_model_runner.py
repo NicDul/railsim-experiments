@@ -7,7 +7,7 @@ import unittest
 from unittest.mock import patch
 
 from railsim_mcp.model_runner import model_identity, request_action, validate_action, check_runner
-from railsim_mcp.search import Search, bounded_process
+from railsim_mcp.runtime import bounded_process
 from railsim_mcp.configuration import Settings
 
 SCHEMA = dict(required=['action','volume','pattern','reason'], properties={
@@ -67,24 +67,7 @@ class ModelRunnerTest(unittest.TestCase):
                        dict(pattern=[dict(product='FV',departure=True)]),dict(pattern=[dict(product='unknown',departure=1)])]:
             with self.subTest(change=change),self.assertRaises(ValueError): validate_action({**ACTION,**change},SCHEMA)
 
-    def test_resume_rejects_runner_or_model_changes_and_preserves_limits(self):
-        with tempfile.TemporaryDirectory() as d,patch.object(Search,'revision',return_value='test'):
-            settings=Settings(Path(d),Path(d)/'state'); output=Path(d)/'result.json'
-            original=Search(settings,output,policy='model',model_runner='copilot',model='test',simulations=5)
-            original.state['simulations']=3;original.save()
-            resumed=Search(settings,output,policy='model',resume=True,model_runner='copilot',model='test',simulations=99)
-            self.assertEqual(resumed.state['limits']['simulations'],5)
-            self.assertEqual(resumed.state['simulations'],3)
-            for runner,model in [('codex','test'),('copilot','other')]:
-                with self.assertRaises(ValueError):
-                    Search(settings,output,policy='model',resume=True,model_runner=runner,model=model)
 
-    def test_resume_rejects_provider_change(self):
-        with tempfile.TemporaryDirectory() as d,patch.object(Search,'revision',return_value='test'),patch.dict(os.environ,clear=True):
-            settings=Settings(Path(d),Path(d)/'state'); output=Path(d)/'result.json'
-            Search(settings,output,policy='model',model_runner='copilot',model='test').save()
-            os.environ['COPILOT_PROVIDER_BASE_URL']='http://localhost:8000/v1'
-            with self.assertRaises(ValueError): Search(settings,output,policy='model',resume=True,model_runner='copilot',model='test')
 
     def test_missing_cli_fails_preflight(self):
         with patch('shutil.which',return_value=None):
@@ -101,39 +84,8 @@ class ModelRunnerTest(unittest.TestCase):
                 action,_=request_action(model_identity('copilot','fake'), 'test', SCHEMA, Path(d)/'1',10,bounded_process)
             self.assertEqual(action,ACTION)
 
-    def test_copilot_controller_keeps_turn_and_attempt_limits(self):
-        # Drive the whole controller through the new policy, without a simulator/model call.
-        with tempfile.TemporaryDirectory() as d,patch.object(Search,'revision',return_value='test'):
-            search=Search(Settings(Path(d),Path(d)/'state'),Path(d)/'result.json',policy='model',
-                          model_runner='copilot',model='fake',turns=2,attempts_per_volume=9)
-            def choose(*args):
-                return dict(action='random',volume=4,pattern=[],reason='test'),dict(usage=[])
-            with patch.object(search,'setup'),patch('railsim_mcp.search.check_runner',return_value={}),\
-                 patch.object(search,'observation',return_value={}),patch('railsim_mcp.search.request_action',side_effect=choose),\
-                 patch.object(search,'validate_pattern',side_effect=ValueError('invalid proposal')):
-                search.run()
-            self.assertEqual(search.state['turns'],2)
-            self.assertEqual(search.volume_state()['model_turns'],2)
-            self.assertEqual(search.state['status'],'volume_unresolved')
-            self.assertLessEqual(search.state['attempts'],3)
 
-    def test_preflight_failure_cannot_spend_simulations(self):
-        with tempfile.TemporaryDirectory() as d,patch.object(Search,'revision',return_value='test'):
-            search=Search(Settings(Path(d),Path(d)/'state'),Path(d)/'result.json',policy='model',model_runner='copilot',model='fake')
-            with patch('railsim_mcp.search.check_runner',side_effect=RuntimeError('missing CLI')),patch.object(search,'setup') as setup:
-                with self.assertRaisesRegex(RuntimeError,'missing CLI'): search.run()
-            setup.assert_not_called()
-            self.assertEqual(search.state['simulations'],0)
-            self.assertEqual(search.state['status'],'error')
 
-    def test_model_cannot_stop_a_different_volume(self):
-        with tempfile.TemporaryDirectory() as d,patch.object(Search,'revision',return_value='test'):
-            search=Search(Settings(Path(d),Path(d)/'state'),Path(d)/'result.json',policy='model',model_runner='copilot',model='fake')
-            action=dict(action='stop',volume=99,pattern=[],reason='test')
-            with patch.object(search,'observation',return_value={}),patch('railsim_mcp.search.request_action',return_value=(action,dict(usage=[]))):
-                with self.assertRaisesRegex(ValueError,'active volume'): search.luna_action()
-            self.assertEqual(search.state['turns'],1)
-            self.assertEqual(search.state['simulations'],0)
 
 
 class OpenAIRunnerTest(unittest.TestCase):

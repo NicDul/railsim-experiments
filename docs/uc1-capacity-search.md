@@ -1,61 +1,25 @@
-# UC1 capacity search: solver, model loop and proofs
+# Solver-first UC1 capacity workflow
 
-This document explains how the UC1 building blocks (BB1-BB3) are searched for
-the highest number of trains per hour that run with zero delay, and how the
-limits are proved. For the numeric table and the proof scripts see
-[`proofs/README.md`](../proofs/README.md).
-
-## Pieces
-
-| Piece | Where | Role |
-| --- | --- | --- |
-| Single-run bridge | `RunSingleSimulation.java`, subcommand `run-once` | Runs one explicit workspace timetable and writes terminal-delay evidence |
-| Scenario workspace + MCP server | `src/main/python/railsim_mcp/` | Edit, freeze and analyse scenarios; `railsim-mcp` stdio server |
-| Search harness | `railsim_mcp/search.py`, `uc1.py`, `uc1_modes.py` | UC1 modes, train-mix rounding, bounded model-driven timetable search |
-| Model runners | `railsim_mcp/model_runner.py` | Codex CLI, Copilot CLI, OpenAI-compatible endpoint, Anthropic API; keys only from the environment |
-| Periodic CP-SAT solvers | `scripts/solve_uc1_cpsat.py`, `solve_uc1_platforms.py`, `solve_uc1_binding.py` | Exact departure seconds and platforms from measured resource claims; every answer is checked by simulation |
-| Hybrid loop | `scripts/order_uc1.py`, `scripts/hybrid_uc1.py` | A model proposes the entry order of train types, CP-SAT times it or proves it impossible and returns the closest miss |
-| Bounds and proofs | `scripts/occupation_bound_uc1.py`, `scripts/window_bound_uc1.py`, `proofs/` | Necessary conditions that exclude rates |
-
-## Running
+Install Python 3.11+, Java/Maven (the wrapper is included), `uv`, and the declared solver extra:
 
 ```sh
-python3 -m venv .venv && .venv/bin/pip install '.[solver,llm]'
-export RAILSIM_PROJECT_ROOT=$PWD            # this checkout (needs ./mvnw and a populated ~/.m2)
-export RAILSIM_STATE_ROOT=/path/outside/the/checkout
-export PYTHONPATH=src/main/python:scripts
-python scripts/solve_uc1_binding.py --building-block BB2 --mode MAINLINE/FV_PASS \
-    --project "$RAILSIM_PROJECT_ROOT" --state-root "$RAILSIM_STATE_ROOT" --output-dir out/bb2
-```
-
-The state root must be outside the checkout. Outputs (runs, logs, models) are
-not committed. Model-driven runs read keys from `RAILSIM_OPENAI_API_KEY` or the
-provider CLI's own login; nothing is written to disk.
-
-## Tests
-
-```sh
-cd src/test/python
-RAILSIM_PROJECT_ROOT=$(cd ../../..; pwd) PYTHONPATH=../../main/python:. \
-  python -m unittest discover -s . -t .      # needs mcp, pydantic, ortools, anthropic
-```
-
-Integration tests under `src/test/integration` exercise the stdio protocol,
-synthetic retained-run analysis and real Java simulation. Build the Java runner
-first, then run them with an isolated external state directory:
-
-```sh
+uv sync --extra solver
 ./mvnw --batch-mode --no-transfer-progress verify
-RAILSIM_PROJECT_ROOT="$PWD" RAILSIM_STATE_ROOT=/tmp/railsim-integration-tests \
-  uv run --extra solver --extra llm python -m unittest discover -s src/test/integration
+uv run --extra solver railsim-capacity --config examples/capacity/bb1.json --project "$PWD" --state-root /private/tmp/capacity-state --output /private/tmp/capacity-results
 ```
 
-The proof regression suite samples ten survivor solves; the complete 150-case
-checks in both formulations are the separate commands in `proofs/README.md`.
+The command resumes the same output directory. Use a new directory if configuration, source inputs, Python/Java code, runtime settings or state roots change. State and output directories must be outside the checkout. A lock prevents simultaneous CLI writers. The historical Python import namespace `railsim_mcp` remains for helper compatibility; there is no MCP dependency, server, protocol or server-global workspace in this workflow.
 
-## Assumptions behind every limit
+The reusable core is `capacity.Workflow`; `cli.py` handles paths, locking and arguments. `simulation`, `profiles`, `solver`, `validation`, `timetable` and `runtime` contain ordinary library operations. Historical proof scripts retain their distinct formulations/checkers. The prior branch preserves removed protocol adapters and direct-timetable policies.
 
-Fixed per-type and per-platform resource profiles measured in isolation, no
-holding or rerouting, 0 s extra gap, a repeating 1,800 s period and a
-largest-remainder train mix. A "limit" is a statement in this model; working
-rates also have zero-delay simulator runs, the exclusions do not.
+At each requested volume, direct CP-SAT chooses departure seconds and platform variants with all orders free. A successful raw simulator gate advances without a model call. UNKNOWN or a simulator rejection can trigger bounded order proposals. Full-model INFEASIBLE suppresses order escalation: a subset of that model cannot restore feasibility. Infeasibility of an order excludes only that order. Simulator feedback is recorded in the model context; it is not silently promoted to a universal constraint.
+
+Configuration contains `building_block`, `mode`, `period_seconds`, `volumes` (trains per period), `seed`, `workers`, `solver_seconds`, `rounds`, `proposals`, `model_seconds` and `runner`. The default runner is `none`. `fixture` loads recorded mock proposals; it exercises plumbing and is not a model performance benchmark. `codex` requires an explicit `model` and uses the existing authenticated CLI. No API fallback is selected by this workflow. No live model benchmarks are part of local validation.
+
+Each rate spends at most one unrestricted solve plus `rounds * proposals` ordered solves, with one simulation per solver witness. A simulation has a 300-second process limit; calibration uses one isolated simulation per route/platform variant. Each model round is bounded by `model_seconds`. Checkpoints reserve calls/trials before execution; an interruption spends that budget and is recorded rather than silently retried. Rejected/duplicate proposals consume proposal slots but no solver/simulation. Completed rates are not rerun by resume.
+
+`bounds-report.json` records effective config, hashes, invocation, calibration, raw solver statuses, patterns, simulator results, model attempts and budgets. `bounds` separates finite simulator witnesses from fixed-profile exclusions and lists unresolved volumes. `maximum` remains null: neither a failed rate nor one excluded rounded composition covers all larger admissible timetables. Resource-occupation exclusions have an independent arithmetic calculation; CP-SAT INFEASIBLE applies to the specified integer surrogate. Profiles round measurements outward, so model infeasibility alone does not establish simulator infeasibility. Only periods 2 and 3 of six repeated periods are scored; finite simulation does not prove indefinite feasibility. Raw terminal delay must be zero and no detours are accepted.
+
+`proof-handoff/` contains `prompt.md`, report, integer resource profiles, frozen simulator inputs, raw compressed events and a SHA-256 manifest. Pass the directory to an external LLM for a proposed proof/checker. Prose is not a certificate. Original absolute paths remain provenance; portable adjacent copies are the evidence. Proof checking remains separate. Explicit witness regression uses `--replay-witness FILE` with a JSON object containing `building_block`, `mode`, `period_seconds`, `pattern` and optional `source`; it is labelled replay, not search discovery.
+
+The article remains a historical research draft with conditional claims. Its retained hybrid trials did not establish maxima. See the delivered validation report for exact new demonstration results and limitations.

@@ -226,7 +226,7 @@ def check_runner(identity, timeout, process):
 def main():
     import argparse
     import tempfile
-    from .search import bounded_process
+    from .runtime import bounded_process
     parser = argparse.ArgumentParser(description='One model-only compatibility probe; no simulations.')
     parser.add_argument('--runner', choices=list(RUNNERS), default='copilot')
     parser.add_argument('--model', required=True)

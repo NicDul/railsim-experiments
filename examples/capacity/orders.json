@@ -1,0 +1,26 @@
+[
+  {
+    "proposals": [
+      {
+        "order": "FFFFFFFFFFFFRRRRRRRRRRRRGGGGGG",
+        "platforms": []
+      },
+      {
+        "order": "FFFFFFFFFFFFRRRRRRRRRRRRGGGGGG",
+        "platforms": []
+      }
+    ]
+  },
+  {
+    "proposals": [
+      {
+        "order": "FFRRG",
+        "platforms": []
+      },
+      {
+        "order": "FRFRG",
+        "platforms": []
+      }
+    ]
+  }
+]
