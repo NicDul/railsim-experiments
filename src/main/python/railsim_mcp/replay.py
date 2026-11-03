@@ -51,4 +51,9 @@ def replay(workflow, path):
     workflow.report.setdefault("replays", []).append(record)
     workflow.persist()
     save(workflow.out / "replay.json", record)
+    from .capacity import assemble
+
+    workflow.report["bounds"] = assemble(workflow.report)
+    save(workflow.out / "bounds-report.json", workflow.report)
+    workflow.export()
     return record

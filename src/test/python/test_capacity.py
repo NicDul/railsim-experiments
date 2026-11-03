@@ -349,3 +349,98 @@ class WorkflowTests(unittest.TestCase):
     def test_no_protocol_dependency_or_server_import(self):
         self.assertIsNone(importlib.util.find_spec("mcp"))
         self.assertFalse((ROOT / "src/main/python/railsim_mcp/server.py").exists())
+
+
+class TransferTests(unittest.TestCase):
+    def test_declared_uc2_modes_preserve_directions_and_volume(self):
+        from railsim_mcp.routing import RouteMode, topology
+
+        path = ROOT / "src/main/resources/scenarios/use_case_2"
+        for mode in [
+            "TRANSIT/BALANCED",
+            "TRANSIT/TRUNK",
+            "METRO/BALANCED",
+            "METRO/TRUNK",
+        ]:
+            routing = RouteMode.load(path / "uc2_operational_plan.json", mode)
+            for n in [4, 5, 6, 9]:
+                counts = routing.composition(n)
+                self.assertEqual(sum(counts.values()), 2 * n)
+                forward = sum(
+                    k
+                    for v, k in counts.items()
+                    if routing.variants[v]["direction"] == "forward"
+                )
+                self.assertEqual(forward, n)
+                self.assertTrue(set(counts) <= set(routing.variants))
+            for bb in [1, 2]:
+                result = topology(path / f"building_block_{bb}", routing.variants)
+                self.assertFalse(result["ordered_guidance_supported"])
+                self.assertEqual(result["platform_resources"], [])
+                self.assertGreater(result["entry_markers"], 1)
+
+    def test_full_model_infeasibility_never_calls_model(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            w = Workflow(
+                Settings(ROOT, root / "state"),
+                config(),
+                root / "out",
+                ["test"],
+                solver=Mock(return_value={"status": "INFEASIBLE"}),
+                model=Mock(),
+            )
+            w.calibrate = Mock(
+                return_value=dict(
+                    variants={
+                        "FV_P1": {"product": "FV"},
+                        "RV_P1": {"product": "RV"},
+                        "GV_P1": {"product": "GV"},
+                    },
+                    windows={
+                        v: {"track": (0, 0, 3)} for v in ["FV_P1", "RV_P1", "GV_P1"]
+                    },
+                )
+            )
+            w.export = Mock()
+            result = w.run()
+            w.model.assert_not_called()
+            self.assertEqual(
+                result["rates"][0]["escalation_reason"],
+                "full_model_infeasible_cannot_be_repaired_by_order",
+            )
+            self.assertEqual(len(result["bounds"]["fixed_profile_exclusions"]), 1)
+            self.assertIsNone(result["bounds"]["maximum"])
+
+    def test_interrupted_solver_witness_spends_budget_without_resimulation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            settings = Settings(ROOT, root / "state")
+            out = root / "out"
+            w = Workflow(settings, config() | {"runner": "none"}, out, ["test"])
+            w.report["rates"] = [
+                dict(
+                    volume=4,
+                    trains_per_hour=8,
+                    composition={"FV": 2, "RV": 1, "GV": 1},
+                    trials=[
+                        dict(
+                            id=0,
+                            status="solver_optimal",
+                            scope="all_orders",
+                            solver={
+                                "status": "OPTIMAL",
+                                "pattern": [["FV", 0, "FV_P1"]],
+                            },
+                        )
+                    ],
+                    rounds=[],
+                    tried=[],
+                    witness=None,
+                )
+            ]
+            w.persist()
+            resumed = Workflow(settings, config() | {"runner": "none"}, out, ["test"])
+            self.assertEqual(
+                resumed.report["rates"][0]["trials"][0]["status"], "interrupted"
+            )

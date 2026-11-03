@@ -3,7 +3,7 @@
 import math
 
 
-def evaluate(run, expected, references):
+def evaluate(run, expected, references, period=1800):
     """Independent expected IDs -> raw terminal times; no rounded aggregate gate."""
     rows = run.get("trains", [])
     by_id = {}
@@ -51,5 +51,5 @@ def evaluate(run, expected, references):
         max_delay=max(delays, default=None),
         total_delay=sum(delays),
         headway_conflicts_diagnostic=run.get("headway_conflicts", []),
-        acceptance="all measured departures in [3600,7200) complete; raw positive exit delay = 0; headways diagnostic",
+        acceptance=f"measured departures in [{2 * period},{4 * period}) complete; raw positive exit delay = 0; headways diagnostic",
     )

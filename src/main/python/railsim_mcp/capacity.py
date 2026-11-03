@@ -33,6 +33,10 @@ def save(path, data):
 
 
 def validate_config(config):
+    if config.setdefault("use_case", "UC1") not in ("UC1", "UC2"):
+        raise ValueError("use_case must be UC1 or UC2")
+    if config["use_case"] == "UC2" and config.get("building_block") == "BB3":
+        raise ValueError("UC2 has only BB1 and BB2")
     if config.get("building_block") not in ("BB1", "BB2", "BB3"):
         raise ValueError("only existing UC1 BB1/BB2/BB3 family supported")
     for name, low, high, default in [
@@ -174,28 +178,33 @@ class Workflow:
             project_root=settings.project,
             runs_root=settings.state / "runs",
         )
-        self.mode = UC1Mode.load(
+        self.use_case = self.config["use_case"]
+        scenario_dir = (
             settings.project
-            / "src/main/resources/scenarios/use_case_1/uc1_operational_plan.json",
-            self.config["mode"],
+            / f"src/main/resources/scenarios/use_case_{self.use_case[-1]}"
         )
+        plan_path = scenario_dir / f"uc{self.use_case[-1]}_operational_plan.json"
+        if self.use_case == "UC1":
+            self.mode = UC1Mode.load(plan_path, self.config["mode"])
+        else:
+            from .routing import RouteMode
+
+            self.mode = RouteMode.load(plan_path, self.config["mode"])
         self.solver, self.simulator, self.model = solver, simulator, model
         self.invocation = invocation
-        source = (
-            settings.project
-            / "src/main/resources/scenarios/use_case_1"
-            / ("building_block_" + config["building_block"][-1])
-        )
+        source = scenario_dir / ("building_block_" + config["building_block"][-1])
         self.inputs = {
             str(p.relative_to(settings.project)): digest(p)
             for p in source.iterdir()
             if p.is_file()
         }
-        plan = (
-            settings.project
-            / "src/main/resources/scenarios/use_case_1/uc1_operational_plan.json"
-        )
-        self.inputs[str(plan.relative_to(settings.project))] = digest(plan)
+        self.inputs[str(plan_path.relative_to(settings.project))] = digest(plan_path)
+        self.topology = None
+        if self.use_case == "UC2":
+            from .routing import topology
+
+            self.topology = topology(source, self.mode.variants)
+            save(self.out / "topology-preflight.json", self.topology)
         self.code = {
             str(p.relative_to(settings.project)): digest(p)
             for folder in ["src/main/java", "src/main/python"]
@@ -238,6 +247,17 @@ class Workflow:
                         record["status"] = "interrupted"
         else:
             self.report = dict(
+                source_revision=subprocess.check_output(
+                    ["git", "rev-parse", "HEAD"], cwd=settings.project, text=True
+                ).strip(),
+                source_dirty=bool(
+                    subprocess.check_output(
+                        ["git", "status", "--porcelain"],
+                        cwd=settings.project,
+                        text=True,
+                    ).strip()
+                ),
+                topology_preflight=self.topology,
                 schema_version=1,
                 identity=self.identity,
                 invocation=invocation,
@@ -245,7 +265,11 @@ class Workflow:
                 rates=[],
                 model_calls=0,
                 assumptions=[
-                    "UC1 fixed forward routes; one declared mix; binding platforms; entry/exit rerouting markers removed only in workspace.",
+                    (
+                        "UC1 fixed forward routes; one declared mix; binding platforms; entry/exit rerouting markers removed only in workspace."
+                        if self.use_case == "UC1"
+                        else "UC2 declared product/flow/direction allocation; original routes/network and rerouting markers unchanged; no platform choice or common entry order assumed."
+                    ),
                     "Integer departures; exclusive isolated windows rounded outward to whole seconds; fixed-profile exclusions concern this surrogate only.",
                     "No holding/recovery in profile model. Simulator gate measures periods 2 and 3 of six repeats; raw positive terminal delay zero; no detours.",
                     "Finite seeded simulation witness, not proof of infinite-horizon feasibility. No simulator-learned constraints used as proof assumptions.",
@@ -260,18 +284,25 @@ class Workflow:
         ref = self.report["calibration"]
         if ref is None:
             workspace = "capacity-" + uuid.uuid4().hex[:12]
-            root = self.ws.create(workspace, "UC1", self.config["building_block"])
-            network = root / "network.xml"
-            text = network.read_text()
-            pattern = r'\s*<attribute name="railsim(Entry|Exit)" class="java.lang.Boolean">true</attribute>'
-            if len(re.findall(pattern, text)) != 2:
-                raise ValueError("expected one entry and exit marker")
-            network.write_text(re.sub(pattern, "", text))
-            variants = add_platform_variants(
-                root / "schedule.xml", network, dict(self.mode.routes)
+            root = self.ws.create(
+                workspace, self.use_case, self.config["building_block"]
             )
-            if set(v["product"] for v in variants.values()) != set(self.mode.shares):
-                raise ValueError("missing product routes")
+            network = root / "network.xml"
+            if self.use_case == "UC1":
+                text = network.read_text()
+                pattern = r'\s*<attribute name="railsim(Entry|Exit)" class="java.lang.Boolean">true</attribute>'
+                if len(re.findall(pattern, text)) != 2:
+                    raise ValueError("expected one entry and exit marker")
+                network.write_text(re.sub(pattern, "", text))
+                variants = add_platform_variants(
+                    root / "schedule.xml", network, dict(self.mode.routes)
+                )
+                if set(v["product"] for v in variants.values()) != set(
+                    self.mode.shares
+                ):
+                    raise ValueError("missing product routes")
+            else:
+                variants = self.mode.variants
             ref = dict(workspace=workspace, variants=variants, baselines={})
             self.report["calibration"] = ref
             self.persist()
@@ -427,7 +458,10 @@ class Workflow:
                 result, run = self.simulator(
                     self.ws,
                     ref["workspace"],
-                    solved["pattern"],
+                    [
+                        [ref["variants"][v]["product"], t, v]
+                        for p, t, v in solved["pattern"]
+                    ],
                     {v: b["terminal"] for v, b in ref["baselines"].items()},
                     self.config["seed"],
                     self.config["period_seconds"],
@@ -447,18 +481,18 @@ class Workflow:
         ref = self.calibrate()
         options = {}
         for variant, info in ref["variants"].items():
-            options.setdefault(info["product"], []).append(variant)
+            options.setdefault(
+                info["product"] if self.use_case == "UC1" else variant, []
+            ).append(variant)
         for volume in self.config["volumes"]:
             row = next((r for r in self.report["rates"] if r["volume"] == volume), None)
             if row is None:
-                counts = {
-                    p: n
-                    for p, n in rounded_counts(volume, self.mode.shares).items()
-                    if n
-                }
+                counts = {p: n for p, n in self.mode.composition(volume).items() if n}
                 row = dict(
                     volume=volume,
-                    trains_per_hour=3600 * volume / self.config["period_seconds"],
+                    trains_per_hour=3600
+                    * sum(counts.values())
+                    / self.config["period_seconds"],
                     composition=counts,
                     trials=[],
                     rounds=[],
@@ -485,8 +519,13 @@ class Workflow:
                 if not row["witness"]
                 else "solver_first_pass_no_model_needed"
             )
+            if self.use_case == "UC2" and not row["witness"] and not excluded:
+                row["escalation_reason"] = (
+                    "shared_entry_order_guidance_unsupported_export_proof"
+                )
             while (
-                not excluded
+                self.use_case == "UC1"
+                and not excluded
                 and not row["witness"]
                 and len(row["rounds"]) < self.config["rounds"]
                 and self.config["runner"] != "none"
@@ -507,6 +546,8 @@ class Workflow:
                 )
                 try:
                     response = self.ask(context, index)
+                    if not isinstance(response, dict):
+                        raise ValueError("model response must be an object")
                     save(self.out / f"model-{index:03}.response.json", response)
                     proposals = response.get("proposals")
                     if not isinstance(proposals, list):
@@ -588,8 +629,10 @@ class Workflow:
             for events in source.rglob("*.events.xml.gz"):
                 shutil.copy2(events, dest / events.name)
         (handoff / "prompt.md").write_text(
-            "# UC1 proof request\n\nResolve the unresolved rates in report.json, or identify precisely what remains unknown.\n"
-            "Building block: "
+            "# Periodic capacity proof request\n\nResolve the unresolved rates in report.json, or identify precisely what remains unknown.\n"
+            "Use case: "
+            + self.use_case
+            + "; Building block: "
             + self.config["building_block"]
             + "; mode: "
             + self.config["mode"]
