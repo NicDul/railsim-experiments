@@ -367,6 +367,7 @@ class Workflow:
             old = previous["identity"]
             if (
                 old["inputs"] != self.identity["inputs"]
+                or old.get("runtime") != self.identity.get("runtime")
                 or old["mode"] != self.identity["mode"]
                 or old["state"] != self.identity["state"]
                 or old["config"]["period_seconds"] != self.config["period_seconds"]

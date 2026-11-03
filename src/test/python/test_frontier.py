@@ -261,3 +261,32 @@ class PartialGuidanceTests(unittest.TestCase):
                 options,
                 windows,
             )
+
+
+class CalibrationReuseTests(unittest.TestCase):
+    def test_changed_runtime_cannot_reuse_a_calibration(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(ROOT, root / "state")
+            config = dict(
+                building_block="BB1",
+                mode="MAINLINE/FV_PASS",
+                volumes=[4],
+                runner="none",
+            )
+            first = Workflow(settings, config, root / "original", ["test"])
+            donor = copy.deepcopy(first.report)
+            donor["identity"]["runtime"]["RAILSIM_DEADLOCK_AVOIDANCE"] = (
+                "different-physics"
+            )
+            donor["calibration"] = {}
+            path = root / "donor.json"
+            path.write_text(json.dumps(donor))
+            second = Workflow(
+                settings,
+                dict(config, calibration_from=str(path)),
+                root / "new",
+                ["test"],
+            )
+            with self.assertRaisesRegex(ValueError, "calibration cache"):
+                second.calibrate()

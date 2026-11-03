@@ -97,7 +97,7 @@ def solve(
         for j in range(i + 1, n):
             for vi, xi in choice[i].items():
                 for vj, xj in choice[j].items():
-                    for resource in set(windows[vi]) & set(windows[vj]):
+                    for resource in sorted(set(windows[vi]) & set(windows[vj])):
                         ci, gi, ri = windows[vi][resource]
                         cj, gj, rj = windows[vj][resource]
                         apart(i, j, (gi, ri), (gj, rj), [xi, xj])
