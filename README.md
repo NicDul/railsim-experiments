@@ -332,6 +332,14 @@ ARGS_ARRAY=(
 ./mvnw exec:java -Dmatsim.log.level=${MATSIM_LOG_LEVEL} -Dexec.args="${ARGS_ARRAY[*]}"
 ```
 
+## UC1 Capacity Search
+
+The `run-once` command, the `railsim_mcp` Python package and the UC1 capacity
+search (CP-SAT timetable solver, solver + language-model loop, and the
+fixed-profile bounds and proofs) are described in
+[docs/uc1-capacity-search.md](docs/uc1-capacity-search.md) and
+[proofs/README.md](proofs/README.md).
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute, and
