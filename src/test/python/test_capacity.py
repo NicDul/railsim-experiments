@@ -314,8 +314,10 @@ class WorkflowTests(unittest.TestCase):
         (source / "inputs").mkdir(parents=True)
         (source / "run.json").write_text("{}")
         (source / "inputs" / "network.xml").write_text("<network/>")
+        (source / "inputs" / "network.xml").chmod(0o444)
         w.report["calibration"]["baselines"] = {"FV_P1": dict(run_id="run")}
         Workflow.export(w)
+        Workflow.export(w)  # idempotent with read-only frozen inputs
         handoff = self.out / "proof-handoff"
         manifest = json.loads((handoff / "manifest.json").read_text())
         self.assertTrue(all(digest(handoff / p) == sha for p, sha in manifest.items()))

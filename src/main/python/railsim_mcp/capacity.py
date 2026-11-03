@@ -625,7 +625,21 @@ class Workflow:
             dest.mkdir(parents=True, exist_ok=True)
             shutil.copy2(source / "run.json", dest / "run.json")
             if (source / "inputs").exists():
-                shutil.copytree(source / "inputs", dest / "inputs", dirs_exist_ok=True)
+                # Frozen snapshots are read-only. Re-export must verify and reuse
+                # identical copies instead of overwriting their read-only files.
+                for original in (source / "inputs").rglob("*"):
+                    target = dest / "inputs" / original.relative_to(source / "inputs")
+                    if original.is_dir():
+                        target.mkdir(parents=True, exist_ok=True)
+                    else:
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if target.exists():
+                            if digest(target) != digest(original):
+                                raise ValueError(
+                                    "exported frozen input changed: " + str(target)
+                                )
+                        else:
+                            shutil.copy2(original, target)
             for events in source.rglob("*.events.xml.gz"):
                 shutil.copy2(events, dest / events.name)
         (handoff / "prompt.md").write_text(
@@ -657,3 +671,34 @@ class Workflow:
                 if p.is_file() and p.name != "manifest.json"
             },
         )
+
+
+def export_existing(settings, config, output):
+    """Repackage recorded evidence after exporter changes, without resuming search.
+
+    Preserve the original computational identity and verify baseline hashes.
+    This does not authorize new solves against a changed code/configuration.
+    """
+    output = Path(output).resolve()
+    report = json.loads((output / "checkpoint.json").read_text())
+    if report["identity"]["config"] != validate_config(dict(config)) or report[
+        "identity"
+    ]["state"] != str(settings.state):
+        raise ValueError("export configuration/state must match recorded computation")
+    ws = ScenarioWorkspace(
+        settings.project / "src/main/resources/scenarios",
+        settings.state / "workspaces",
+        project_root=settings.project,
+        runs_root=settings.state / "runs",
+    )
+    for relative, sha in report["calibration"].get("evidence_hashes", {}).items():
+        if digest(ws.runs_root / relative) != sha:
+            raise ValueError("recorded calibration evidence changed")
+    exporter = object.__new__(Workflow)
+    exporter.out, exporter.report, exporter.ws = output, report, ws
+    exporter.config = config
+    exporter.use_case = config.get("use_case", "UC1")
+    report["exporter_sha256"] = digest(Path(__file__))
+    Workflow.export(exporter)
+    save(output / "bounds-report.json", report)
+    return report

@@ -6,7 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
-from .capacity import Workflow, digest, save
+from .capacity import Workflow, digest, save, export_existing
 from .configuration import Settings
 from .runtime import SIM_JVM_OPTIONS
 
@@ -21,6 +21,11 @@ def main():
         "--replay-witness",
         type=Path,
         help="validate a supplied witness instead of searching",
+    )
+    parser.add_argument(
+        "--export-only",
+        action="store_true",
+        help="repackage an existing checkpoint without rerunning/resuming computation",
     )
     args = parser.parse_args()
     try:
@@ -37,6 +42,10 @@ def main():
             os.environ["MAVEN_OPTS"] = (
                 os.environ.get("MAVEN_OPTS", "") + " " + SIM_JVM_OPTIONS
             ).strip()
+            if args.export_only:
+                result = export_existing(settings, config, args.output)["bounds"]
+                print(json.dumps(result, indent=2))
+                return
             workflow = Workflow(
                 settings,
                 config,
