@@ -1,11 +1,15 @@
 import json
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
 from railsim_mcp.capacity import save
-from railsim_mcp.exhaustive import cyclic_entry_matches, evaluate_ordering, summarize
+from railsim_mcp.exhaustive import (
+    cyclic_entry_matches, evaluate_ordering, reuse_solver_result, run_tasks,
+    simulate_ordering, solve_ordering, summarize, summarize_models,
+)
 from railsim_mcp.flexibility import _ordering_id
 import railsim_mcp.exhaustive as exhaustive
 
@@ -86,6 +90,71 @@ class ExhaustiveTests(unittest.TestCase):
             result = evaluate_ordering(self.order, self.ref, Mock(), solver=solver, simulator=simulator)
         self.assertEqual(result["status"], "unresolved")
         self.assertEqual(solver.call_count, 1)
+
+    def test_solver_phase_persists_witness_without_simulating_or_resolving_it(self):
+        pattern = [["A", 0, "A_P1"], ["B", 11, "B_P1"]]
+        solver = Mock(return_value={"status": "OPTIMAL", "slot_pattern": pattern})
+        plan = solve_ordering(self.order, self.ref, solver=solver)
+        self.assertEqual(plan["status"], "solver_feasible")
+        self.assertEqual(plan["slot_pattern"], pattern)
+        self.assertEqual(plan["simulations"], [])
+        simulator = Mock(return_value=(
+            {"passed": True, "max_delay": 0, "total_delay": 0, "missing": 0, "detours": 0}, {},
+        ))
+        with patch("railsim_mcp.exhaustive.audit_simulation", return_value={}):
+            final = simulate_ordering(plan, self.ref, Mock(), simulator=simulator)
+        self.assertEqual(final["status"], "works")
+        self.assertEqual(solver.call_count, 1)
+        self.assertEqual(simulator.call_args.args[2], pattern)
+
+    def test_retained_repair_plan_reuses_the_passing_witness(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "final.json"
+            failed = {"passed": False, "max_delay": 1, "total_delay": 2, "missing": 0, "detours": 0}
+            passed = failed | {"passed": True, "max_delay": 0, "total_delay": 0}
+            result = {
+                "status": "works", "solver_status": "OPTIMAL",
+                "simulations": [
+                    {"pattern": ["failed"], "min_gap": 0, "score": failed},
+                    {"pattern": ["passed"], "min_gap": 1, "score": passed},
+                ],
+            }
+            save(path, result)
+            before = path.read_bytes()
+            plan = reuse_solver_result(result, path, "identity")
+            self.assertEqual(plan["slot_pattern"], ["passed"])
+            self.assertEqual(plan["solver_model_gap"], 1)
+            self.assertEqual(path.read_bytes(), before)
+
+    def test_stop_drains_active_ordering_without_submitting_pending_jobs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            completed = []
+
+            def work(item):
+                completed.append(item)
+                (output / "STOP").write_text("stop")
+
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                stopping = run_tasks(pool, work, list(range(5)), 1, output)
+            self.assertTrue(stopping)
+            self.assertEqual(completed, [0])
+
+    def test_model_summary_does_not_call_feasibility_simulator_validation(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            (output / "solver-results/2").mkdir(parents=True)
+            (output / "orders/2").mkdir(parents=True)
+            key = _ordering_id(self.order)
+            save(output / "solver-results/2" / (key + ".json"), {
+                "ordering": self.order, "ordering_id": key, "status": "solver_feasible",
+            })
+            report = summarize_models(output, [(2, self.order)])
+            self.assertTrue(report["complete"])
+            self.assertEqual(report["cases"][0]["solver_feasible"], 1)
+            self.assertEqual(report["cases"][0]["simulator_validated"], 0)
+            self.assertEqual(report["cases"][0]["model_feasible_percent"], 100)
+            self.assertTrue((output / "solver-curve.md").read_text().startswith("|"))
 
     def test_zero_gap_infeasible_is_not_simulated_unknown_is_not_no(self):
         simulator = Mock()

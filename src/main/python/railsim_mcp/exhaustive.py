@@ -142,7 +142,7 @@ def audit_simulation(ws, score, raw, pattern, ordering, variants, period=1800):
     }
 
 
-def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, simulator=simulate):
+def solve_ordering(ordering, ref, *, seconds=3, seed=4711, solver=solve):
     """Prefer simulator-safe separation; only zero-gap infeasibility excludes."""
     entry = next(iter(ordering))
     products = ordering[entry]
@@ -190,24 +190,56 @@ def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, 
                 if margin == 0 else "one_second_solver_" + trial["status"].lower()
             )
             break
-        pattern = trial["slot_pattern"]
         result["gap1_infeasible_zero_feasible"] = margin == 0
-        score, raw = simulator(
-            ws, ref["workspace"], pattern,
-            {variant: baseline["terminal"] for variant, baseline in ref["baselines"].items()},
-            seed, 1800,
-        )
-        audit = audit_simulation(ws, score, raw, pattern, ordering, ref["variants"])
-        result["simulations"].append(
-            {"min_gap": margin, "pattern": pattern, "score": score, "audit": audit}
-        )
-        if _simulation_passed(score):
-            result["status"] = "works"
-            result.pop("unresolved_reason", None)
-            break
-        result["unresolved_reason"] = "simulator_rejected_solver_witness"
+        result["status"] = "solver_feasible"
+        result["slot_pattern"] = trial["slot_pattern"]
         break
     return result
+
+
+def simulate_ordering(plan, ref, ws, *, seed=4711, simulator=simulate):
+    result = dict(plan, simulations=[])
+    if plan["status"] != "solver_feasible":
+        return result
+    pattern = plan["slot_pattern"]
+    score, raw = simulator(
+        ws, ref["workspace"], pattern,
+        {variant: baseline["terminal"] for variant, baseline in ref["baselines"].items()},
+        seed, 1800,
+    )
+    audit = audit_simulation(ws, score, raw, pattern, plan["ordering"], ref["variants"])
+    result["simulations"].append({
+        "min_gap": plan["solver_model_gap"], "pattern": pattern,
+        "score": score, "audit": audit,
+    })
+    result["status"] = "works" if _simulation_passed(score) else "unresolved"
+    if result["status"] == "unresolved":
+        result["unresolved_reason"] = "simulator_rejected_solver_witness"
+    return result
+
+
+def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, simulator=simulate):
+    return simulate_ordering(
+        solve_ordering(ordering, ref, seconds=seconds, seed=seed, solver=solver),
+        ref, ws, seed=seed, simulator=simulator,
+    )
+
+
+def reuse_solver_result(result, final_path, identity_sha256):
+    plan = dict(result, simulations=[], plan_identity_sha256=identity_sha256,
+                reused_final_record=str(final_path), reused_final_sha256=digest(final_path))
+    if result["solver_status"] in ("OPTIMAL", "FEASIBLE"):
+        candidates = result["simulations"]
+        if not candidates:
+            raise ValueError("retained feasible result has no simulator witness")
+        selected = next((candidate for candidate in candidates if _simulation_passed(candidate["score"])), candidates[0])
+        plan.update(status="solver_feasible", slot_pattern=selected["pattern"],
+                    solver_model_gap=selected["min_gap"])
+    elif result["solver_status"] == "INFEASIBLE":
+        plan["status"] = "conditional_no"
+    else:
+        plan["status"] = "unresolved"
+    return plan
 
 
 _WORKER = None
@@ -258,7 +290,7 @@ def _initialize_worker(root, ref):
     _WORKER = (directory, ws, ref)
 
 
-def _job(task):
+def _job(task, solver_only=False):
     directory, ws, ref = _WORKER
     volume, ordering = task
     cpu_start = resource.getrusage(resource.RUSAGE_CHILDREN)
@@ -266,17 +298,33 @@ def _job(task):
     cpu_self = time.process_time()
     if shutil.disk_usage(directory).free < 2 * 1024**3:
         raise RuntimeError("less than2 GiB free; stop safely rather than lose witness evidence")
-    result = evaluate_ordering(ordering, ref, ws)
+    if solver_only:
+        result = solve_ordering(ordering, ref)
+        result["plan_identity_sha256"] = ref["plan_identity_sha256"]
+    else:
+        plan = json.loads((Path(ref["output"]) / "solver-results" / str(volume) / (_ordering_id(ordering) + ".json")).read_text())
+        if plan["ordering"] != ordering or plan["plan_identity_sha256"] != ref["plan_identity_sha256"]:
+            raise ValueError("saved solver witness identity mismatch")
+        result = simulate_ordering(plan, ref, ws)
     usage = resource.getrusage(resource.RUSAGE_CHILDREN)
+    measured_cpu = (
+        time.process_time() - cpu_self + usage.ru_utime + usage.ru_stime
+        - cpu_start.ru_utime - cpu_start.ru_stime
+    )
     result.update(
         volume=volume,
         worker=directory.name,
         execution_generation=ref.get("generation", "legacy"),
         wall_seconds=time.monotonic() - started,
-        cpu_seconds=time.process_time() - cpu_self
-        + usage.ru_utime + usage.ru_stime - cpu_start.ru_utime - cpu_start.ru_stime,
+        cpu_seconds=measured_cpu + (0 if solver_only else plan["cpu_seconds"]),
     )
-    save(Path(ref["output"]) / "orders" / str(volume) / (result["ordering_id"] + ".json"), result)
+    if not solver_only:
+        result["solver_phase_cpu_seconds"] = plan["cpu_seconds"]
+        result["simulation_phase_cpu_seconds"] = measured_cpu
+    if solver_only:
+        save(Path(ref["output"]) / "solver-results" / str(volume) / (result["ordering_id"] + ".json"), result)
+    if not solver_only or result["status"] != "solver_feasible":
+        save(Path(ref["output"]) / "orders" / str(volume) / (result["ordering_id"] + ".json"), result)
     # Retain immutable inputs, raw events, run.json, simulation.json and route audit.
     # The redundant dense train-state CSV is not used by the witness checker.
     for simulation in result["simulations"]:
@@ -285,6 +333,86 @@ def _job(task):
         if redundant.is_file():
             redundant.unlink()
     return result
+
+
+def _solve_job(task):
+    return _job(task, solver_only=True)
+
+
+def run_tasks(pool, function, tasks, workers, output):
+    queue = iter(tasks)
+    futures = set()
+    stopping = (output / "STOP").exists()
+    if not stopping:
+        for _ in range(workers):
+            task = next(queue, None)
+            if task is not None:
+                futures.add(pool.submit(function, task))
+    completed = 0
+    while futures:
+        finished, _ = wait(futures, return_when=FIRST_COMPLETED)
+        for future in finished:
+            futures.remove(future)
+            future.result()
+            completed += 1
+            stopping = stopping or (output / "STOP").exists()
+            if not stopping:
+                task = next(queue, None)
+                if task is not None:
+                    futures.add(pool.submit(function, task))
+            if completed % 100 == 0:
+                print(json.dumps({"phase": function.__name__, "completed": completed, "total": len(tasks)}), flush=True)
+    return stopping
+
+
+def summarize_models(output, tasks):
+    rows = {}
+    for volume, ordering in tasks:
+        row = rows.setdefault(volume, {
+            "volume": volume, "denominator": 0, "solver_feasible": 0,
+            "conditional_no": 0, "unresolved": 0, "pending": 0,
+            "simulator_validated": 0, "distinct_simulated": 0,
+        })
+        row["denominator"] += 1
+        key = _ordering_id(ordering)
+        path = output / "solver-results" / str(volume) / (key + ".json")
+        if path.exists():
+            plan = json.loads(path.read_text())
+            if plan["ordering"] != ordering or plan["ordering_id"] != key:
+                raise ValueError("solver summary ordering identity mismatch")
+            row[plan["status"]] += 1
+        else:
+            row["pending"] += 1
+        final = output / "orders" / str(volume) / (key + ".json")
+        if final.exists():
+            record = json.loads(final.read_text())
+            row["simulator_validated"] += record["status"] == "works"
+            row["distinct_simulated"] += bool(record["simulations"])
+    points = list(rows.values())
+    for row in points:
+        if row["denominator"] != row["solver_feasible"] + row["conditional_no"] + row["unresolved"] + row["pending"]:
+            raise ValueError("solver classifications do not partition denominator")
+        row["model_feasible_percent"] = 100 * row["solver_feasible"] / row["denominator"]
+    report = {"provisional_model_only": True, "cases": points,
+              "complete": not any(row["pending"] for row in points)}
+    save(output / "solver-summary.json", report)
+    lines = [
+        "| UC1 / BB2 MAINLINE/FV_STOP volume (total trains/hour) | Orders | Model feasible | Conditional no | Solver unresolved | Pending | Model-feasible % (provisional) | Simulator validated |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+    for row in points:
+        lines.append(
+            f"| MAINLINE/FV_STOP @ {row['volume']} ({2 * row['volume']}/hour) | {row['denominator']} | "
+            f"{row['solver_feasible']} | {row['conditional_no']} | {row['unresolved']} | "
+            f"{row['pending']} | {row['model_feasible_percent']:.2f}% | {row['simulator_validated']} |"
+        )
+    lines += ["", "Provisional fixed-profile solver curve, NOT simulator-validated flexibility. "
+              "One-second separation is preferred; only original zero-gap INFEASIBLE is conditional no. "
+              "Every feasible saved schedule is queued for strict simulation unless that ordering already has "
+              "an individually audited final simulation result. Model-feasible includes rejected zero-gap "
+              "fallbacks; simulator passage is shown separately. No sampling or physical-infeasibility claim."]
+    (output / "solver-curve.md").write_text("\n".join(lines) + "\n")
+    return report
 
 
 def summarize(output, tasks):
@@ -355,6 +483,7 @@ def main():
     parser.add_argument("--workers", type=int, default=8)
     parser.add_argument("--batch-classpath", type=Path, required=True)
     parser.add_argument("--equivalence-report", type=Path, required=True)
+    parser.add_argument("--phase", choices=("all", "solve", "simulate"), default="all")
     args = parser.parse_args()
     if not 1 <= args.workers <= min(os.cpu_count() or 1, 8):
         parser.error("workers must be between1 and8 and no more than available CPUs")
@@ -362,7 +491,7 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        stage = output / "stages/batch-v2"
+        stage = output / "stages/solver-first-v3"
         stage.mkdir(parents=True, exist_ok=True)
         migration_path = stage / "migration.json"
         if not migration_path.exists():
@@ -378,15 +507,16 @@ def main():
             "limits": {"cpu_seconds": 100000, "wall_seconds": 100000, "simulations": 20000, "model_calls": 0},
             "calibration_from": str(output / "calibration/checkpoint.json"),
         }
-        workflow = Workflow(Settings(args.project.resolve(), output / "calibration-state"), config, stage / "calibration", ["exhaustive-batch-v2"], minimum_volume=1)
+        workflow = Workflow(Settings(args.project.resolve(), output / "calibration-state"), config, stage / "calibration", ["exhaustive-solver-first-v3"], minimum_volume=1)
         ref = workflow.calibrate()
         ref = dict(ref, project=str(args.project.resolve()), output=str(output),
                    workspace_path=str(workflow.ws.workspace_root / ref["workspace"]),
-                   generation="batch-v2", classpath=args.batch_classpath.read_text().strip())
+                   generation="solver-first-v3", classpath=args.batch_classpath.read_text().strip())
         tasks = []
         expected = {}
         for volume in range(1, 14):
             (output / "orders" / str(volume)).mkdir(parents=True, exist_ok=True)
+            (output / "solver-results" / str(volume)).mkdir(parents=True, exist_ok=True)
             groups = order_groups("UC1", None, {p: n for p, n in workflow.mode.composition(volume).items() if n}, ref["windows"])
             orders = list(enumerate_orderings(groups))
             if len(orders) != ordering_universe(groups):
@@ -402,39 +532,33 @@ def main():
         if identity_path.exists() and json.loads(identity_path.read_text()) != normalized:
             raise ValueError("exhaustive identity changed; use a different output")
         save(identity_path, identity)
-        remaining = [(v, o) for v, o in tasks if not (output / "orders" / str(v) / (_ordering_id(o) + ".json")).exists()]
+        ref["plan_identity_sha256"] = digest(identity_path)
+        for volume, ordering in tasks:
+            key = _ordering_id(ordering)
+            final = output / "orders" / str(volume) / (key + ".json")
+            model = output / "solver-results" / str(volume) / (key + ".json")
+            if model.exists():
+                if json.loads(model.read_text())["plan_identity_sha256"] != ref["plan_identity_sha256"]:
+                    raise ValueError("resumed solver plan identity mismatch")
+            elif final.exists():
+                save(model, reuse_solver_result(json.loads(final.read_text()), final, ref["plan_identity_sha256"]))
         started = time.monotonic()
         with ProcessPoolExecutor(max_workers=args.workers, mp_context=multiprocessing.get_context("spawn"), initializer=_initialize_worker, initargs=(str(output), ref)) as pool:
-            for volume in range(1, 14):
-                pending = [(v, o) for v, o in remaining if v == volume]
-                queue = iter(pending)
-                stopping = (output / "STOP").exists()
-                futures = set()
-                if not stopping:
-                    for _ in range(args.workers):
-                        task = next(queue, None)
-                        if task is not None:
-                            futures.add(pool.submit(_job, task))
-                completed = 0
-                while futures:
-                    finished, _ = wait(futures, return_when=FIRST_COMPLETED)
-                    for future in finished:
-                        futures.remove(future)
-                        future.result()
-                        completed += 1
-                        stopping = stopping or (output / "STOP").exists()
-                        if not stopping:
-                            task = next(queue, None)
-                            if task is not None:
-                                futures.add(pool.submit(_job, task))
-                        if completed % 50 == 0:
-                            print(json.dumps({"volume": volume, "completed": completed, "total": len(pending), "elapsed": time.monotonic() - started}), flush=True)
-                rows = summarize(output, tasks)
-                if stopping:
-                    print(json.dumps({"stopped_at_ordering_boundary": True, "cases": rows}), flush=True)
+            if args.phase in ("all", "solve"):
+                pending = [(v, o) for v, o in tasks if not (output / "solver-results" / str(v) / (_ordering_id(o) + ".json")).exists()]
+                if run_tasks(pool, _solve_job, pending, args.workers, output):
+                    summarize_models(output, tasks)
+                    summarize(output, tasks)
                     return
-                print(json.dumps({"completed_volume": volume, "cases": rows[:volume], "elapsed": time.monotonic() - started}), flush=True)
+            model_report = summarize_models(output, tasks)
+            if not model_report["complete"]:
+                raise ValueError("simulation phase requires every ordering's solver classification")
+            print(json.dumps({"solver_pass_complete": True, "cases": model_report["cases"], "elapsed": time.monotonic() - started}), flush=True)
+            if args.phase in ("all", "simulate"):
+                pending = [(v, o) for v, o in tasks if not (output / "orders" / str(v) / (_ordering_id(o) + ".json")).exists()]
+                run_tasks(pool, _job, pending, args.workers, output)
         summarize(output, tasks)
+        summarize_models(output, tasks)
 
 
 if __name__ == "__main__":

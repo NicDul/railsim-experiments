@@ -123,6 +123,16 @@ output directory. No Maven/JVM startup is needed between requests. Creating
 `STOP` in the output directory drains at most the eight active orderings and
 exits without scheduling more; remove that explicit stop request before resume.
 
+The solver-first revision records a new `stages/solver-first-v3/` identity
+without changing or re-running retained completed orderings. It first classifies
+every remaining ordering in parallel, saving each feasible schedule under
+`solver-results/<volume>/<ordering-id>.json`. `solver-summary.json` and the
+matrix-first `solver-curve.md` show the provisional model-only feasible fraction
+alongside actual simulator validation counts. This is not a flexibility claim.
+Only after that entire pass does it simulate the saved feasible schedules,
+without solving them again. `--phase solve` or `--phase simulate` can run either
+checkpointed phase separately; the default `--phase all` executes both in order.
+
 Only solver-feasible witnesses are simulated. Same-tick resource
 release/request ordering in the simulator can delay a zero-gap witness by one
 second even though the integer half-open profile intervals do not overlap.
