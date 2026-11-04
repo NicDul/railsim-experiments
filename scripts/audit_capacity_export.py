@@ -1,10 +1,55 @@
 """Standard-library audit of a portable capacity export, independent of solver construction."""
 
 import argparse
+from collections import Counter
+from fractions import Fraction
+import gzip
 import hashlib
 import json
 import math
 from pathlib import Path
+import xml.etree.ElementTree as ET
+
+
+def allocate(total, shares):
+    targets = {key: total * Fraction(str(share)) for key, share in shares.items() if share > 0}
+    counts = {key: int(target) for key, target in targets.items()}
+    for key in sorted(targets, key=lambda key: (counts[key] - targets[key], key))[
+        :total - sum(counts.values())
+    ]:
+        counts[key] += 1
+    return counts
+
+
+def composition(plan, mode, volume):
+    mix, pattern = mode.split("/")
+    counts = Counter()
+    for product, number in allocate(volume, plan["mixes"][mix]["shares"]).items():
+        for flow, amount in allocate(number, plan["patterns"][pattern]["shares"][product]).items():
+            mapping = plan["flows"][flow]["routes"][product]
+            counts[mapping["forward"]] += amount
+            counts[mapping["reverse"]] += amount
+    return +counts
+
+
+def turnback_events(directory):
+    """Independent raw dwell and detour check, without importing the workflow."""
+    paths = list(directory.glob("*.events.xml.gz"))
+    assert len(paths) == 1
+    stops = {}
+    with gzip.open(paths[0]) as stream:
+        for _, element in ET.iterparse(stream, events=["end"]):
+            if element.tag == "event":
+                event = element.attrib
+                assert event["type"] != "railsimDetourEvent"
+                if event.get("facility") == "M_REVERSING" and event["type"] in (
+                    "VehicleArrivesAtFacility", "VehicleDepartsAtFacility"
+                ):
+                    key = (event["vehicle"], event["type"])
+                    assert key not in stops
+                    stops[key] = float(event["time"])
+            element.clear()
+    return stops
 
 
 def audit(root):
@@ -18,6 +63,13 @@ def audit(root):
     profiles = json.loads((root / "profiles.json").read_text())
     period = report["identity"]["config"]["period_seconds"]
     ref = report["calibration"]
+    config = report["identity"]["config"]
+    uc3_plan = None
+    if config["use_case"] == "UC3":
+        baseline = next(iter(ref["baselines"].values()))["run_id"]
+        uc3_plan = json.loads(
+            (root / "runs" / baseline / "inputs/uc3_operational_plan.json").read_text()
+        )
     passing = 0
     exclusions = 0
     rows = report["rates"] + [
@@ -26,6 +78,13 @@ def audit(root):
         if r["simulation"]["passed"]
     ]
     for row in rows:
+        if uc3_plan:
+            if "volume" in row:
+                assert Counter(row["composition"]) == composition(uc3_plan, config["mode"], row["volume"])
+            assert row["trains_per_hour"] == (
+                3600 * (sum(row["composition"].values()) if "composition" in row else len(row["witness"]["pattern"]))
+                / period
+            )
         for resource, claimed in (
             row.get("occupation", {}).get("resource_minimum_seconds", {}).items()
         ):
@@ -40,8 +99,7 @@ def audit(root):
             measured = sum(
                 n
                 * min(
-                    profiles[v].get(resource, [0, 0, 0])[2]
-                    - profiles[v].get(resource, [0, 0, 0])[1]
+                    sum(end - start for _, start, end in visits(profiles[v].get(resource, [0, 0, 0])))
                     for v in options[p]
                 )
                 for p, n in row["composition"].items()
@@ -52,6 +110,13 @@ def audit(root):
                 exclusions += 1
         witness = row.get("witness")
         if witness:
+            if uc3_plan:
+                actual = Counter(variant for _, _, variant in witness["pattern"])
+                assert any(
+                    actual == composition(uc3_plan, config["mode"], volume)
+                    for volume in ([row["volume"]] if "volume" in row else config["volumes"])
+                )
+                stops = turnback_events(root / "runs" / witness["simulation"]["run_id"])
             run = json.loads(
                 (
                     root / "runs" / witness["simulation"]["run_id"] / "run.json"
@@ -68,6 +133,7 @@ def audit(root):
                         time + repeat * period + ref["baselines"][variant]["terminal"]
                     )
                     assert train["status"] == "terminal_arrived"
+                    assert train["route_id"] == variant
                     assert train["scheduled_departure"] == time + repeat * period
                     assert train["planned_arrival"] == expected
                     assert all(
@@ -78,6 +144,12 @@ def audit(root):
                         train["actual_arrival"] <= expected
                         and train["terminal_delay_seconds"] <= 0
                     )
+                    if uc3_plan and variant == "RV_LML":
+                        vehicle = f"{product}_{index:02}_p{repeat}"
+                        assert (
+                            stops[vehicle, "VehicleDepartsAtFacility"]
+                            - stops[vehicle, "VehicleArrivesAtFacility"] >= 480
+                        )
             passing += 1
     lower = max(
         (row["trains_per_hour"] for row in rows if row.get("witness")),
@@ -92,6 +164,10 @@ def audit(root):
         resource_exclusions=exclusions,
         caveat="Checks retained raw terminal times and occupancy arithmetic, not universal simulator/model equivalence or CP-SAT infeasibility proof.",
     )
+
+
+def visits(value):
+    return [value] if isinstance(value[0], (int, float)) else value
 
 
 if __name__ == "__main__":

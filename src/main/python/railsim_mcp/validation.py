@@ -3,7 +3,7 @@
 import math
 
 
-def evaluate(run, expected, references, period=1800):
+def evaluate(run, expected, references, period=1800, *, check_routes=False):
     """Independent expected IDs -> raw terminal times; no rounded aggregate gate."""
     rows = run.get("trains", [])
     by_id = {}
@@ -20,6 +20,8 @@ def evaluate(run, expected, references, period=1800):
         if row is None or row.get("status") != "terminal_arrived":
             missing.append(ident)
             continue
+        if check_routes and row.get("route_id") != product:
+            errors.append("changed route: " + ident)
         actual = row.get("actual_arrival")
         reported = row.get("terminal_delay_seconds")
         planned = departure + references[product]

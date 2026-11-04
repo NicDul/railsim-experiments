@@ -2,6 +2,7 @@
 
 import time
 from ortools.sat.python import cp_model
+from .profiles import intervals
 
 
 def solve(
@@ -40,7 +41,10 @@ def solve(
     for i in range(n):
         model.AddExactlyOne(choice[i].values())
         for v, x in choice[i].items():
-            if any(r - g + min_gap > period for _, g, r in windows[v].values()):
+            if any(
+                r - g + min_gap > period
+                for value in windows[v].values() for _, g, r in intervals(value)
+            ):
                 model.Add(x == 0)
         if (
             order is None
@@ -94,35 +98,44 @@ def solve(
         model.Add(gap <= high).OnlyEnforceIf(when)
 
     for i in range(n):
+        for v, x in choice[i].items():
+            for value in windows[v].values():
+                visits = intervals(value)
+                for a, (_, ga, ra) in enumerate(visits):
+                    for _, gb, rb in visits[a + 1:]:
+                        apart(i, i, (ga, ra), (gb, rb), [x])
+
+    for i in range(n):
         for j in range(i + 1, n):
             for vi, xi in choice[i].items():
                 for vj, xj in choice[j].items():
                     for resource in sorted(set(windows[vi]) & set(windows[vj])):
-                        ci, gi, ri = windows[vi][resource]
-                        cj, gj, rj = windows[vj][resource]
-                        apart(i, j, (gi, ri), (gj, rj), [xi, xj])
-                        if (vi, vj, resource) in rules:
-                            apart(i, j, (gi, ri), (cj, rj), [xi, xj])
-                        if (vj, vi, resource) in rules:
-                            apart(i, j, (ci, ri), (gj, rj), [xi, xj])
+                        for ci, gi, ri in intervals(windows[vi][resource]):
+                            for cj, gj, rj in intervals(windows[vj][resource]):
+                                apart(i, j, (gi, ri), (gj, rj), [xi, xj])
+                                if (vi, vj, resource) in rules:
+                                    apart(i, j, (gi, ri), (cj, rj), [xi, xj])
+                                if (vj, vi, resource) in rules:
+                                    apart(i, j, (ci, ri), (gj, rj), [xi, xj])
     if no_overlap:
         # Holds repeat every period: three copies cover every relative shift, since departures lie
         # within one period and every hold is shorter than it.
         holds = {}
         for i in range(n):
             for v, x in choice[i].items():
-                for resource, (_, g, r) in windows[v].items():
-                    for m in range(3):
-                        holds.setdefault(resource, []).append(
-                            model.NewOptionalFixedSizeIntervalVar(
-                                departure[i] + g + m * period,
-                                max(r - g + min_gap, 1),
-                                x,
-                                "",
+                for resource, value in windows[v].items():
+                    for _, g, r in intervals(value):
+                        for m in range(3):
+                            holds.setdefault(resource, []).append(
+                                model.NewOptionalFixedSizeIntervalVar(
+                                    departure[i] + g % period + m * period,
+                                    max(r - g + min_gap, 1),
+                                    x,
+                                    "",
+                                )
                             )
-                        )
-        for intervals in holds.values():
-            model.AddNoOverlap(intervals)
+        for resource_intervals in holds.values():
+            model.AddNoOverlap(resource_intervals)
     if hint:
         by_group = {}
         for group, t, v in hint:
