@@ -1,11 +1,12 @@
 """Exhaustive UC1 entry-order solving with isolated, resumable process workers."""
 
 import argparse
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import fcntl
 import hashlib
 import json
 import multiprocessing
+import multiprocessing.util
 import os
 from pathlib import Path
 import resource
@@ -26,6 +27,7 @@ from .simulation import simulate
 from .solver import solve
 from .uc1 import events
 from .workspace import ScenarioWorkspace
+from .batch import PersistentScenarioWorkspace
 
 
 def digest(path):
@@ -141,7 +143,7 @@ def audit_simulation(ws, score, raw, pattern, ordering, variants, period=1800):
 
 
 def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, simulator=simulate):
-    """Keep zero-gap negatives distinct from stricter candidate-repair failures."""
+    """Prefer simulator-safe separation; only zero-gap infeasibility excludes."""
     entry = next(iter(ordering))
     products = ordering[entry]
     options = {
@@ -159,36 +161,37 @@ def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, 
         "trials": [],
         "simulations": [],
     }
-    forbidden = []
-    # A stricter repair is a candidate search, never an infeasibility certificate.
-    for attempt, margin in enumerate((0, 1, 2)):
+    for attempt, margin in enumerate((1, 0)):
         solve_seed = (seed + int(result["ordering_id"][:8], 16) + attempt) % 2147483647
         trial = solver(
             products, options, ref["windows"], seconds, frozenset(), 1,
             min_gap=margin, period=1800, seed=solve_seed,
-            order=products, entry=entry, forbidden_patterns=forbidden,
+            order=products, entry=entry,
         )
         result["trials"].append({"min_gap": margin, "solver": trial})
-        if margin == 0:
-            result["solver_status"] = trial["status"]
-        if trial["status"] == "UNKNOWN" and margin == 0:
+        if trial["status"] == "UNKNOWN":
             trial = solver(
                 products, options, ref["windows"], max(seconds * 5, 15),
                 frozenset(), 1, period=1800, seed=solve_seed,
-                order=products, entry=entry,
+                min_gap=margin, order=products, entry=entry,
             )
-            result["trials"].append({"min_gap": 0, "solver": trial})
-            result["solver_status"] = trial["status"]
+            result["trials"].append({"min_gap": margin, "solver": trial})
+        result["solver_status"] = trial["status"]
+        result["solver_model_gap"] = margin
+        if margin == 1 and trial["status"] == "INFEASIBLE":
+            result["preferred_gap_infeasible"] = True
+            continue
         if trial["status"] == "INFEASIBLE" and margin == 0:
             result["status"] = "conditional_no"
             break
         if trial["status"] not in ("OPTIMAL", "FEASIBLE"):
             result["unresolved_reason"] = (
                 "zero_gap_solver_" + trial["status"].lower()
-                if margin == 0 else "repair_solver_" + trial["status"].lower()
+                if margin == 0 else "one_second_solver_" + trial["status"].lower()
             )
             break
         pattern = trial["slot_pattern"]
+        result["gap1_infeasible_zero_feasible"] = margin == 0
         score, raw = simulator(
             ws, ref["workspace"], pattern,
             {variant: baseline["terminal"] for variant, baseline in ref["baselines"].items()},
@@ -202,8 +205,8 @@ def evaluate_ordering(ordering, ref, ws, *, seconds=3, seed=4711, solver=solve, 
             result["status"] = "works"
             result.pop("unresolved_reason", None)
             break
-        forbidden.append(pattern)
-        result["unresolved_reason"] = "simulator_rejected_all_bounded_candidates"
+        result["unresolved_reason"] = "simulator_rejected_solver_witness"
+        break
     return result
 
 
@@ -213,7 +216,10 @@ _WORKER = None
 def _initialize_worker(root, ref):
     global _WORKER
     worker = multiprocessing.current_process().name.replace("-", "").lower()
-    directory = Path(root) / "workers" / worker
+    directory = Path(root) / "workers"
+    if ref.get("generation"):
+        directory /= ref["generation"]
+    directory /= worker
     directory.mkdir(parents=True, exist_ok=True)
     project = directory / "project"
     source = Path(ref["project"])
@@ -224,12 +230,20 @@ def _initialize_worker(root, ref):
                 shutil.copy2(source / filename, project / filename)
         for dirname in (".mvn", "src", "target"):
             shutil.copytree(source / dirname, project / dirname)
-    ws = ScenarioWorkspace(
+    backend = PersistentScenarioWorkspace if ref.get("classpath") else ScenarioWorkspace
+    backend_options = (
+        {"classpath": str(project / "target/classes") + os.pathsep + ref["classpath"]}
+        if ref.get("classpath") else {}
+    )
+    ws = backend(
         project / "src/main/resources/scenarios",
         directory / "state/workspaces",
         project_root=project,
         runs_root=directory / "state/runs",
+        **backend_options,
     )
+    if isinstance(ws, PersistentScenarioWorkspace):
+        multiprocessing.util.Finalize(None, ws.close, exitpriority=10)
     ws.timeout_seconds = 120
     workspace = ws.workspace_root / ref["workspace"]
     if not workspace.exists():
@@ -257,6 +271,7 @@ def _job(task):
     result.update(
         volume=volume,
         worker=directory.name,
+        execution_generation=ref.get("generation", "legacy"),
         wall_seconds=time.monotonic() - started,
         cpu_seconds=time.process_time() - cpu_self
         + usage.ru_utime + usage.ru_stime - cpu_start.ru_utime - cpu_start.ru_stime,
@@ -291,6 +306,8 @@ def summarize(output, tasks):
         row["simulated"] += bool(result["simulations"])
         row["simulator_calls"] += len(result["simulations"])
         row["rejected_candidates"] += sum(not _simulation_passed(s["score"]) for s in result["simulations"])
+        row["preferred_gap_infeasible"] = row.get("preferred_gap_infeasible", 0) + bool(result.get("preferred_gap_infeasible"))
+        row["gap1_infeasible_zero_feasible"] = row.get("gap1_infeasible_zero_feasible", 0) + bool(result.get("gap1_infeasible_zero_feasible"))
     rows = list(by_volume.values())
     for row in rows:
         if row["denominator"] != row["works"] + row["conditional_no"] + row["unresolved"] + row["pending"]:
@@ -300,11 +317,44 @@ def summarize(output, tasks):
     return rows
 
 
+def validate_upgrade(output, project, report_path):
+    legacy = json.loads((output / "identity.json").read_text())
+    for relative, expected in legacy["calibration_identity"]["code"].items():
+        if relative != "src/main/python/railsim_mcp/exhaustive.py" and digest(project / relative) != expected:
+            raise ValueError(f"physics/solver/snapshot source changed: {relative}")
+    proof = json.loads(report_path.read_text())
+    cases = proof.get("cases", [])
+    if (
+        proof.get("legacy_identity_sha256") != digest(output / "identity.json")
+        or len({case["ordering_id"] for case in cases}) < 10
+        or not any(case["previously_repaired"] for case in cases)
+        or not all(case["events_equal"] and case["score_equal"] and case["audit_equal"] for case in cases)
+    ):
+        raise ValueError("batch upgrade requires ten exact event/score/audit equivalence cases including repairs")
+    for relative in (
+        "src/main/python/railsim_mcp/batch.py",
+        "src/main/java/org/matsim/project/RunBatchSimulation.java",
+    ):
+        if proof["adapter_sha256"].get(relative) != digest(project / relative):
+            raise ValueError(f"batch equivalence adapter changed: {relative}")
+    return {
+        "legacy_identity_sha256": digest(output / "identity.json"),
+        "equivalence_report": str(report_path),
+        "equivalence_report_sha256": digest(report_path),
+        "retained_record_sha256": {
+            str(path.relative_to(output)): digest(path)
+            for path in (output / "orders").glob("*/*.json")
+        },
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--project", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--batch-classpath", type=Path, required=True)
+    parser.add_argument("--equivalence-report", type=Path, required=True)
     args = parser.parse_args()
     if not 1 <= args.workers <= min(os.cpu_count() or 1, 8):
         parser.error("workers must be between1 and8 and no more than available CPUs")
@@ -312,15 +362,27 @@ def main():
     output.mkdir(parents=True, exist_ok=True)
     with (output / ".lock").open("w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        stage = output / "stages/batch-v2"
+        stage.mkdir(parents=True, exist_ok=True)
+        migration_path = stage / "migration.json"
+        if not migration_path.exists():
+            save(migration_path, validate_upgrade(output, args.project.resolve(), args.equivalence_report.resolve()))
+        migration = json.loads(migration_path.read_text())
+        for relative, expected_hash in migration["retained_record_sha256"].items():
+            if digest(output / relative) != expected_hash:
+                raise ValueError(f"completed pre-upgrade record changed: {relative}")
         config = {
             "use_case": "UC1", "building_block": "BB2", "mode": "MAINLINE/FV_STOP",
             "period_seconds": 1800, "volumes": list(range(1, 14)),
             "workers": 1, "runner": "none",
             "limits": {"cpu_seconds": 100000, "wall_seconds": 100000, "simulations": 20000, "model_calls": 0},
+            "calibration_from": str(output / "calibration/checkpoint.json"),
         }
-        workflow = Workflow(Settings(args.project.resolve(), output / "calibration-state"), config, output / "calibration", ["exhaustive"], minimum_volume=1)
+        workflow = Workflow(Settings(args.project.resolve(), output / "calibration-state"), config, stage / "calibration", ["exhaustive-batch-v2"], minimum_volume=1)
         ref = workflow.calibrate()
-        ref = dict(ref, project=str(args.project.resolve()), output=str(output), workspace_path=str(workflow.ws.workspace_root / ref["workspace"]))
+        ref = dict(ref, project=str(args.project.resolve()), output=str(output),
+                   workspace_path=str(workflow.ws.workspace_root / ref["workspace"]),
+                   generation="batch-v2", classpath=args.batch_classpath.read_text().strip())
         tasks = []
         expected = {}
         for volume in range(1, 14):
@@ -333,8 +395,9 @@ def main():
             expected[volume] = len(orders)
         if sum(expected.values()) != 8131:
             raise ValueError("unexpected exhaustive BB2 denominator")
-        identity = {"calibration_identity": workflow.identity, "workspace_hashes": ref["workspace_hashes"], "workers": args.workers, "runner_sha256": digest(__file__), "denominators": expected}
-        identity_path = output / "identity.json"
+        identity = {"calibration_identity": workflow.identity, "workspace_hashes": ref["workspace_hashes"], "workers": args.workers, "runner_sha256": digest(__file__), "denominators": expected,
+                    "classpath_sha256": digest(args.batch_classpath)}
+        identity_path = stage / "identity.json"
         normalized = json.loads(json.dumps(identity))
         if identity_path.exists() and json.loads(identity_path.read_text()) != normalized:
             raise ValueError("exhaustive identity changed; use a different output")
@@ -344,14 +407,32 @@ def main():
         with ProcessPoolExecutor(max_workers=args.workers, mp_context=multiprocessing.get_context("spawn"), initializer=_initialize_worker, initargs=(str(output), ref)) as pool:
             for volume in range(1, 14):
                 pending = [(v, o) for v, o in remaining if v == volume]
-                futures = [pool.submit(_job, task) for task in pending]
+                queue = iter(pending)
+                stopping = (output / "STOP").exists()
+                futures = set()
+                if not stopping:
+                    for _ in range(args.workers):
+                        task = next(queue, None)
+                        if task is not None:
+                            futures.add(pool.submit(_job, task))
                 completed = 0
-                for future in as_completed(futures):
-                    future.result()
-                    completed += 1
-                    if completed % 50 == 0:
-                        print(json.dumps({"volume": volume, "completed": completed, "total": len(pending), "elapsed": time.monotonic() - started}), flush=True)
+                while futures:
+                    finished, _ = wait(futures, return_when=FIRST_COMPLETED)
+                    for future in finished:
+                        futures.remove(future)
+                        future.result()
+                        completed += 1
+                        stopping = stopping or (output / "STOP").exists()
+                        if not stopping:
+                            task = next(queue, None)
+                            if task is not None:
+                                futures.add(pool.submit(_job, task))
+                        if completed % 50 == 0:
+                            print(json.dumps({"volume": volume, "completed": completed, "total": len(pending), "elapsed": time.monotonic() - started}), flush=True)
                 rows = summarize(output, tasks)
+                if stopping:
+                    print(json.dumps({"stopped_at_ordering_boundary": True, "cases": rows}), flush=True)
+                    return
                 print(json.dumps({"completed_volume": volume, "cases": rows[:volume], "elapsed": time.monotonic() - started}), flush=True)
         summarize(output, tasks)
 

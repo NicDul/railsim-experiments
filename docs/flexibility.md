@@ -87,15 +87,27 @@ its existing minimum volume of 4.
 ## Exhaustive UC1/BB2 curve
 
 The bounded sampled workflow above is not a substitute for an exhaustive curve.
-For the complete MAINLINE/FV_STOP domain at volumes 1 through 13, use:
+The persistent-JVM upgrade of an existing exhaustive checkpoint covers the
+complete MAINLINE/FV_STOP domain at volumes 1 through 13:
 
 ```sh
 JAVA_HOME=/opt/homebrew/opt/openjdk@25 \
 PATH="/opt/homebrew/opt/openjdk@25/bin:$PATH" \
 MAVEN_OPTS="-Xmx768m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC" \
 uv run --extra solver python -m railsim_mcp.exhaustive \
-  --project "$PWD" --output /absolute/external/exhaustive-results --workers 8
+  --project "$PWD" --output /absolute/external/exhaustive-results --workers 8 \
+  --batch-classpath target/batch-classpath.txt \
+  --equivalence-report /absolute/external/exhaustive-results/batch-equivalence.json
 ```
+
+Build once with `./mvnw -o -q compile dependency:build-classpath
+-Dmdep.outputFile=target/batch-classpath.txt -DincludeScope=runtime`, with the same
+JDK/environment. The equivalence report must demonstrate identical raw events,
+scores and route/entry audits for at least ten unique retained orderings,
+including repaired witnesses. Migration checks that existing physics, solver
+and snapshot sources are unchanged, preserves every completed record, and
+imports hash-checked calibration into a separate `stages/batch-v2/` checkpoint.
+It refuses to silently reuse results after other source/model changes.
 
 Select an installed compatible JDK for your machine. The runner enumerates all
 8,131 distinct cyclic orders, uses one CP-SAT thread per process, and creates
@@ -105,15 +117,22 @@ support strict resume without re-running completed orderings. The old 100/120
 simulation acceptance allowance does not cover this explicitly requested
 exhaustive run. Keep an external execution ledger and sufficient disk space for
 raw events; the runner stops rather than proceeding below 2 GiB of free space.
+Each worker keeps one sequential Java process alive over JSON-lines requests.
+Every request still receives a separate immutable input snapshot, run ID and
+output directory. No Maven/JVM startup is needed between requests. Creating
+`STOP` in the output directory drains at most the eight active orderings and
+exits without scheduling more; remove that explicit stop request before resume.
 
-Every zero-gap solver-feasible ordering is simulated. Same-tick resource
+Only solver-feasible witnesses are simulated. Same-tick resource
 release/request ordering in the simulator can delay a zero-gap witness by one
 second even though the integer half-open profile intervals do not overlap.
-After a rejected witness, the runner attempts new witnesses with one and then
-two seconds of separation, without weakening the raw zero-delay gate. A stricter
-repair becoming infeasible does not exclude the original zero-gap ordering.
-Only original-model INFEASIBLE is a conditional no; UNKNOWN or exhausted
-simulator repairs remain unresolved.
+The runner now solves with one-second resource separation first and simulates
+that witness. Only if it is INFEASIBLE does it solve the original zero-gap
+model. Zero-gap feasible witnesses are simulated and their fallbacks explicitly
+counted; zero-gap INFEASIBLE is a conditional no. One-second INFEASIBLE alone
+never excludes an ordering. UNKNOWN or simulator rejection remains unresolved.
+The raw zero-delay gate is unchanged. Earlier completed zero-gap/repair records
+are retained with their original per-attempt provenance.
 
 Each simulation audits frozen input hashes, absent UC1 rerouting markers,
 actual route links, detour events, expected train IDs/departures and cyclic entry
