@@ -16,6 +16,7 @@ plots = ["matplotlib"]
 
 [project.scripts]
 railsim-capacity = "railsim_mcp.cli:main"
+railsim-flexibility = "railsim_mcp.flexibility_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src/main/python"]

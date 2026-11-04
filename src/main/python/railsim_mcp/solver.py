@@ -21,6 +21,8 @@ def solve(
     entry=None,
     resource_orders=None,
     hint=None,
+    entry_orders=None,
+    forbidden_patterns=None,
 ):
     """Any departure and platform variant per train; exclusive holds at least min_gap seconds apart.
 
@@ -50,6 +52,8 @@ def solve(
         ):
             model.Add(departure[i] > departure[i - 1])
 
+    if order is not None and entry_orders is not None:
+        raise ValueError("use order or entry_orders, not both")
     if order is not None:
         if list(order) != list(products):
             raise ValueError("order solve requires products in proposed order")
@@ -71,6 +75,75 @@ def solve(
             )
         for i in range(1, n):
             model.Add(arrivals[i] > arrivals[i - 1])
+
+    if entry_orders is not None:
+        covered = set()
+        for resource, indices in sorted(entry_orders.items()):
+            if not isinstance(resource, str) or not indices:
+                raise ValueError("each entry order requires a resource and train indices")
+            if len(set(indices)) != len(indices) or any(
+                type(i) is not int or i < 0 or i >= n for i in indices
+            ):
+                raise ValueError("entry order indices must be distinct train slots")
+            if covered.intersection(indices):
+                raise ValueError("a train slot cannot use multiple entry orders")
+            covered.update(indices)
+            grants = []
+            for i in indices:
+                values = [
+                    windows[v][resource][1]
+                    for v in options[products[i]]
+                    if resource in windows[v]
+                ]
+                if len(values) != len(options[products[i]]) or len(set(values)) != 1:
+                    raise ValueError(
+                        "entry grant must exist and be variant independent for every train"
+                    )
+                grants.append(values[0])
+            arrivals = [
+                model.NewIntVar(0, period - 1, f"e_{resource}_{i}")
+                for i in indices
+            ]
+            for position, i in enumerate(indices):
+                model.AddModuloEquality(
+                    arrivals[position],
+                    departure[i] + grants[position] - grants[0] + period * 10,
+                    period,
+                )
+            for position in range(1, len(indices)):
+                model.Add(arrivals[position] > arrivals[position - 1])
+        if covered != set(range(n)):
+            raise ValueError("entry orders must cover every train slot exactly once")
+
+    if forbidden_patterns:
+        selected_variant = []
+        for i in range(n):
+            variants = list(options[products[i]])
+            index = model.NewIntVar(0, len(variants) - 1, f"variant_{i}")
+            for variant_index, variant in enumerate(variants):
+                model.Add(index == variant_index).OnlyEnforceIf(choice[i][variant])
+            selected_variant.append(index)
+        assignments = departure + selected_variant
+        variant_indices = {
+            i: {variant: j for j, variant in enumerate(options[products[i]])}
+            for i in range(n)
+        }
+        for pattern in forbidden_patterns:
+            if len(pattern) != n:
+                raise ValueError("forbidden pattern must contain one row per train slot")
+            times = []
+            variants = []
+            for i, row in enumerate(pattern):
+                if (
+                    len(row) != 3
+                    or row[0] != products[i]
+                    or row[2] not in variant_indices[i]
+                    or type(row[1]) is not int
+                ):
+                    raise ValueError("forbidden pattern does not match train slots")
+                times.append(row[1])
+                variants.append(variant_indices[i][row[2]])
+            model.AddForbiddenAssignments(assignments, [times + variants])
 
     from .guidance import constrain
 
@@ -147,7 +220,7 @@ def solve(
         solve_seconds=round(time.monotonic() - started, 2),
     )
     if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-        rows = [
+        slot_pattern = [
             [
                 products[i],
                 solver.Value(departure[i]),
@@ -155,5 +228,7 @@ def solve(
             ]
             for i in range(n)
         ]
-        result["pattern"] = sorted(rows, key=lambda r: (r[1], r[0]))
+        rows = sorted(slot_pattern, key=lambda r: (r[1], r[0]))
+        result["pattern"] = rows
+        result["slot_pattern"] = slot_pattern
     return result

@@ -1,0 +1,25 @@
+{
+  "use_case": "UC1",
+  "building_block": "BB1",
+  "mode": "METRO/RV_STOP",
+  "period_seconds": 1800,
+  "volumes": [4],
+  "seed": 4711,
+  "workers": 1,
+  "solver_seconds": 5,
+  "rounds": 0,
+  "proposals": 1,
+  "runner": "none",
+  "limits": {
+    "wall_seconds": 120,
+    "cpu_seconds": 60,
+    "simulations": 20,
+    "model_calls": 0
+  },
+  "flexibility": {
+    "exact_ordering_cap": 5000,
+    "sample_count": 2,
+    "candidate_retries": 1,
+    "seed": 4711
+  }
+}

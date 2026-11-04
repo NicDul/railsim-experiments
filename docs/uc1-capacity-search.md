@@ -31,3 +31,8 @@ Use `--export-only` to repackage a recorded checkpoint after exporter fixes with
 For finite frontier sweeps, resource-order guidance, measured budgets and their limits, see [resource-order guidance](resource-order-guidance.md). The earlier smoke-test validation remains historical; frontier results are reported separately.
 
 Measured representative frontiers and live-model limitations are in [frontier validation](frontier-validation.md).
+
+Entry-order flexibility is measured by the adjacent `railsim-flexibility`
+workflow. It writes separate checkpoints and Markdown output and does not
+change the existing capacity frontier or its proof scope; see
+[entry-order flexibility](flexibility.md).
