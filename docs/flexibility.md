@@ -133,6 +133,25 @@ Only after that entire pass does it simulate the saved feasible schedules,
 without solving them again. `--phase solve` or `--phase simulate` can run either
 checkpointed phase separately; the default `--phase all` executes both in order.
 
+## BB3 model-only pilot and complete curve
+
+`python -m railsim_mcp.solver_curve` supports the explicitly solver-only BB3
+MAINLINE/FV_STOP domain at volumes 1 through 16 (108,235 distinct cyclic orders).
+Pass `--project`, `--output`, and `--calibration-from` pointing to an existing
+BB3 capacity/flexibility calibration checkpoint. It verifies scenario/physics
+hashes, raw evidence, absence of rerouting markers/events, and reconstructed
+resource windows before copying isolated profiles. It runs **no simulations**.
+
+The default 256-order, volume-16 spread pilot measures timing only, not a sampled
+flexibility estimate. With eight workers, its measured projection must be below
+six hours before automatic exhaustive continuation. Pilot results are retained
+and skipped during the full pass. Every feasible schedule is saved for possible
+later simulator validation. UNKNOWN remains unresolved; only zero-gap
+INFEASIBLE is conditional no. `STOP` drains active solves, and unchanged
+identities allow resuming without overwriting completed results. Model-feasible
+percentages are provisional fixed-profile results, never simulator-validated
+flexibility.
+
 Only solver-feasible witnesses are simulated. Same-tick resource
 release/request ordering in the simulator can delay a zero-gap witness by one
 second even though the integer half-open profile intervals do not overlap.
