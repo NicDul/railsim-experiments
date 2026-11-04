@@ -328,8 +328,14 @@ class FlexibilityWorkflow:
             kwargs["solver"] = solver
         if simulator is not None:
             kwargs["simulator"] = simulator
+        minimum_volume = 1 if self.config.get("use_case", "UC1") == "UC1" else 4
         self.capacity = Workflow(
-            settings, self.config, self.out / "calibration", invocation, **kwargs
+            settings,
+            self.config,
+            self.out / "calibration",
+            invocation,
+            minimum_volume=minimum_volume,
+            **kwargs,
         )
         self.checkpoint = self.out / "flexibility-checkpoint.json"
         self.report = None

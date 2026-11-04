@@ -78,3 +78,8 @@ to control enumeration and bounded validation:
 The results matrix is written before the detailed count/provenance tables and
 uses the configured volume and trains/hour; UC2 volume is per direction and
 its total rate includes both directions.
+
+Flexibility accepts UC1 volumes from 1 through 100 so the deterministic mix
+rounding can be analyzed at small configured volumes. This does not lower the
+capacity-search workflow's existing minimum of 4 trains per period. UC2 keeps
+its existing minimum volume of 4.

@@ -36,6 +36,15 @@ def config(**kwargs):
 
 
 class ProposalTests(unittest.TestCase):
+    def test_capacity_volume_floor_remains_four(self):
+        with self.assertRaises(ValueError):
+            validate_config(config() | {"volumes": [1]})
+
+        extended = validate_config(
+            config() | {"volumes": [1, 2, 3]}, minimum_volume=1
+        )
+        self.assertEqual(extended["volumes"], [1, 2, 3])
+
     def test_rotation_dedup_includes_platform_assignment(self):
         opts = {"FV": ["FV_P1", "FV_P2"], "RV": ["RV_P1"], "GV": ["GV_P1"]}
         counts = {"FV": 2, "RV": 1, "GV": 1}

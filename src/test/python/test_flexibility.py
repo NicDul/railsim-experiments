@@ -22,12 +22,39 @@ from railsim_mcp.flexibility import (
 from railsim_mcp.routing import RouteMode
 from railsim_mcp.simulation import simulate
 from railsim_mcp.solver import solve
+from railsim_mcp.uc1_modes import UC1Mode
 
 
 ROOT = Path(__file__).resolve().parents[3]
 
 
 class OrderingTests(unittest.TestCase):
+    def test_small_uc1_volumes_use_native_deterministic_rounding(self):
+        mode = UC1Mode.load(
+            ROOT / "src/main/resources/scenarios/use_case_1/uc1_operational_plan.json",
+            "MAINLINE/FV_STOP",
+        )
+        self.assertEqual(
+            mode.composition(1), {"FV": 1, "RV": 0, "GV": 0}
+        )
+        self.assertEqual(mode.composition(2), {"FV": 1, "RV": 1, "GV": 0})
+        self.assertEqual(mode.composition(3), {"FV": 1, "RV": 1, "GV": 1})
+
+    def test_uc2_flexibility_keeps_its_existing_volume_floor(self):
+        config = {
+            "use_case": "UC2",
+            "building_block": "BB1",
+            "mode": "METRO/BALANCED",
+            "period_seconds": 1800,
+            "volumes": [1],
+            "runner": "none",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            settings = Settings(ROOT, root / "state")
+            with self.assertRaisesRegex(ValueError, "4..100"):
+                FlexibilityWorkflow(settings, config, root / "output", ["test"])
+
     def test_necklace_counts_and_periodic_rotation_canonicalization(self):
         self.assertEqual(necklace_count({"F": 4}), 1)
         self.assertEqual(necklace_count({"F": 2, "R": 2}), 2)
