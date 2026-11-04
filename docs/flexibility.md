@@ -83,3 +83,42 @@ Flexibility accepts UC1 volumes from 1 through 100 so the deterministic mix
 rounding can be analyzed at small configured volumes. This does not lower the
 capacity-search workflow's existing minimum of 4 trains per period. UC2 keeps
 its existing minimum volume of 4.
+
+## Exhaustive UC1/BB2 curve
+
+The bounded sampled workflow above is not a substitute for an exhaustive curve.
+For the complete MAINLINE/FV_STOP domain at volumes 1 through 13, use:
+
+```sh
+JAVA_HOME=/opt/homebrew/opt/openjdk@25 \
+PATH="/opt/homebrew/opt/openjdk@25/bin:$PATH" \
+MAVEN_OPTS="-Xmx768m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC" \
+uv run --extra solver python -m railsim_mcp.exhaustive \
+  --project "$PWD" --output /absolute/external/exhaustive-results --workers 8
+```
+
+Select an installed compatible JDK for your machine. The runner enumerates all
+8,131 distinct cyclic orders, uses one CP-SAT thread per process, and creates
+separate project copies, calibrated workspaces, simulator states and outputs for
+each worker. Atomic per-order records and input/code/calibration identities
+support strict resume without re-running completed orderings. The old 100/120
+simulation acceptance allowance does not cover this explicitly requested
+exhaustive run. Keep an external execution ledger and sufficient disk space for
+raw events; the runner stops rather than proceeding below 2 GiB of free space.
+
+Every zero-gap solver-feasible ordering is simulated. Same-tick resource
+release/request ordering in the simulator can delay a zero-gap witness by one
+second even though the integer half-open profile intervals do not overlap.
+After a rejected witness, the runner attempts new witnesses with one and then
+two seconds of separation, without weakening the raw zero-delay gate. A stricter
+repair becoming infeasible does not exclude the original zero-gap ordering.
+Only original-model INFEASIBLE is a conditional no; UNKNOWN or exhausted
+simulator repairs remain unresolved.
+
+Each simulation audits frozen input hashes, absent UC1 rerouting markers,
+actual route links, detour events, expected train IDs/departures and cyclic entry
+phases modulo the period. `summary.json` partitions unique order IDs into works,
+conditional no, unresolved and pending, separately recording solver-feasible
+orders, distinct simulated orders, candidate simulation calls and rejected
+candidates. If unresolved orders remain, its bounds are deterministic
+known-works/unknown-works bounds, not sampling confidence intervals.
