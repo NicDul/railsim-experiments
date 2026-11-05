@@ -7,8 +7,8 @@
 
 | UC2 flexibility: mode x volume per direction (trains/hour total) | BB1 |
 | --- | ---: |
-| METRO/BALANCED @ 4 per direction / 1800 s (32.0/hour total) | 100.0% exact |
-| METRO/BALANCED @ 6 per direction / 1800 s (48.0/hour total) | 100.0% estimate [15.8-100.0%, 95% CI] |
+| METRO/BALANCED @ 4 per direction / 1800 s (16.0/hour total) | 100.0% exact |
+| METRO/BALANCED @ 6 per direction / 1800 s (24.0/hour total) | 100.0% estimate [15.8-100.0%, 95% CI] |
 
 ## Detailed counts and provenance
 
@@ -26,8 +26,8 @@ The denominator is the exact number of distinct cyclic entry-order combinations.
 | UC1 | MAINLINE/FV_STOP | BB2 | 30 / period; 60.0 trains/hour | 53,522,021,856 | 0 / 0 | 53,522,021,856 | 0 / 0 / 0 | 100% | Not needed; sound resource-occupation rejection covers the denominator | Whole-composition necessary-condition rejection |
 | UC1 | MAINLINE/FV_STOP | BB3 | 30 / period; 60.0 trains/hour | 53,522,021,856 | 0 / 0 | 53,522,021,856 | 0 / 0 / 0 | 100% | Not needed; sound resource-occupation rejection covers the denominator | Whole-composition necessary-condition rejection |
 | UC1 | METRO/RV_STOP | BB1 | 4 / period; 8.0 trains/hour | 1 | 1 / 1 | 0 | 0 / 0 / 0 | 100% | 1/1 ordering validated (100%) | Exact ordering enumeration and simulator validation |
-| UC2 | METRO/BALANCED | BB1 | 4 per direction; 32.0 trains/hour total | 2 | 2 / 2 | 0 | 0 / 0 / 0 | 100% | 2/2 unique feasible orders validated (100%) | Exact product of independent entry-order enumerations |
-| UC2 | METRO/BALANCED | BB1 | 6 per direction; 48.0 trains/hour total | 4 | 2 / 1 | 0 | 0 / 0 / 3 | 100% | 2 draws; 1/4 unique feasible orders (25%) | Exact ordering enumeration; uniform simulator-validation sample |
+| UC2 | METRO/BALANCED | BB1 | 4 per direction; 16.0 trains/hour total | 2 | 2 / 2 | 0 | 0 / 0 / 0 | 100% | 2/2 unique feasible orders validated (100%) | Exact product of independent entry-order enumerations |
+| UC2 | METRO/BALANCED | BB1 | 6 per direction; 24.0 trains/hour total | 4 | 2 / 1 | 0 | 0 / 0 / 3 | 100% | 2 draws; 1/4 unique feasible orders (25%) | Exact ordering enumeration; uniform simulator-validation sample |
 
 The UC1 MAINLINE/FV_STOP volumes 4 and 5, and UC2 METRO/BALANCED volume 6, have exact solver classification but sampled simulator validation. The validation draws use the configured seed `4711` and sample count `2`; their point estimates are not exact percentages. The intervals are two-sided 95% Clopper-Pearson intervals over independent uniform draws with replacement. Three solver-feasible UC1 orders remain unvalidated at volume 4 across each block; four remain unvalidated at volume 5. UC2 volume 6 has three solver-feasible orders not validated. These are unresolved, not no results.
 
@@ -36,6 +36,11 @@ At UC2 volume 4, the three used physical entries have separate cyclic sequences:
 At UC1 MAINLINE/FV_STOP volume 30, the exact denominator is covered by a sound resource-occupation necessary-condition rejection before per-order solving or simulation. This is a conditional no under the existing fixed-profile capacity-model assumptions, not an unrestricted claim of physical infeasibility. No result here changes the separate capacity frontier or promotes finite simulator evidence into an exhaustive capacity claim.
 
 ## Acceptance provenance
+
+Integration corrected the UC2 hourly labels, which had counted both directions
+twice. The underlying compositions already contain eight and twelve complete
+route departures per 1,800 seconds, respectively. This reporting correction
+does not change the saved solver classifications or flexibility percentages.
 
 Acceptance used the checked-in configurations under `examples/flexibility/` and Java 25. Final reports and resumable state were written outside the checkout under `/tmp/railsim-flexibility-acceptance-20261104/verified-*`. The five final runs covered UC1 MAINLINE/FV_STOP on BB1-BB3, UC1 METRO/RV_STOP on BB1, and UC2 METRO/BALANCED on BB1. Together they used 138.75 CPU seconds, 115.57 wall seconds, 40 simulator calls, and zero model calls.
 

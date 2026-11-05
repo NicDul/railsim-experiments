@@ -6,6 +6,9 @@ the capacity workflow's calibration, solver, simulator and persistent budget
 framework, but writes separate flexibility checkpoints and reports. Existing
 capacity bounds and tables are not modified.
 
+Entry-order flexibility supports UC1 and UC2 only. UC3 capacity is supported
+separately; its repeated resource visits do not use this entry-order workflow.
+
 Run a declared example from the repository root:
 
 ```sh
@@ -85,6 +88,10 @@ The results matrix is written before the detailed count/provenance tables and
 uses the configured volume and trains/hour; UC2 volume is per direction and
 its total rate includes both directions.
 
+Hourly rates count each configured complete route departure once:
+`3600 * sum(composition.values()) / period_seconds`. UC2 compositions already
+include both directions.
+
 Flexibility accepts UC1 volumes from 1 through 100 so the deterministic mix
 rounding can be analyzed at small configured volumes. This does not lower the
 capacity-search workflow's existing minimum of 4 trains per period. UC2 keeps
@@ -97,8 +104,8 @@ The persistent-JVM upgrade of an existing exhaustive checkpoint covers the
 complete MAINLINE/FV_STOP domain at volumes 1 through 13:
 
 ```sh
-JAVA_HOME=/opt/homebrew/opt/openjdk@25 \
-PATH="/opt/homebrew/opt/openjdk@25/bin:$PATH" \
+JAVA_HOME=/path/to/jdk-25 \
+PATH="/path/to/jdk-25/bin:$PATH" \
 MAVEN_OPTS="-Xmx768m -XX:TieredStopAtLevel=1 -XX:+UseSerialGC" \
 uv run --extra solver python -m railsim_mcp.exhaustive \
   --project "$PWD" --output /absolute/external/exhaustive-results --workers 8 \

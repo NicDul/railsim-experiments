@@ -25,18 +25,18 @@ Rates are total trains/hour **including both directions**. The search volume is 
 
 ## UC3 — Reversing
 
-The scenario catalogue declares these modes, but this revision's capacity CLI rejects UC3 (`use_case must be UC1 or UC2`). No UC3 solver formulation or capacity result is available.
+The integrated capacity CLI supports all four UC3 combinations with complete reversing trips and native volumes 1-6. See [UC3 semantics and reproduction](uc3-capacity-search.md). The historical matrix below has no UC3 capacity measurements; support does not establish a capacity result.
 
 | Mode / pattern | BB1: side reversing track | BB2: middle reversing track |
 | --- | --- | --- |
-| METRO / LOW_REVERSAL | Unsupported | Unsupported |
-| METRO / HIGH_REVERSAL | Unsupported | Unsupported |
+| METRO / LOW_REVERSAL | Supported; not measured here | Supported; not measured here |
+| METRO / HIGH_REVERSAL | Supported; not measured here | Supported; not measured here |
 
 ## Reading the table
 
 All numbers are finite, seeded simulator-feasible lower bounds for the stated rounded mode, not proven maxima. `*` means one or more larger tested volumes remain unresolved by the bounded solver run. An unstarred value means every larger count in the tested 4–100-per-period grid was classified by the fixed-profile surrogate; it does **not** make surrogate exclusions an unrestricted simulator proof. CP-SAT `UNKNOWN`, budget exhaustion, and resource-occupation bounds are not equivalent to infeasibility or a simulator failure. No case in this table proves a global or unrestricted capacity maximum.
 
-The common matrix run was performed on 2026-11-04, revision `7e958283faa2ee99ca2dcc16c09f4b10e0972f99`, using one solver worker, seed 4711, a 1,800-second period, all integer volumes 4–100, and up to 5 seconds per direct solve. Per case it allowed 120 active wall seconds, 100 measured local CPU seconds, and 18 simulator calls, with no model calls. UC1/UC2 modes were tested only in declared building-block combinations. All 23 supported cases produced at least one passing simulator witness; all 237 candidate simulations passed. Four UC3 combinations were confirmed unsupported.
+The common matrix run was performed on 2026-11-04, revision `7e958283faa2ee99ca2dcc16c09f4b10e0972f99`, using one solver worker, seed 4711, a 1,800-second period, all integer volumes 4–100, and up to 5 seconds per direct solve. Per case it allowed 120 active wall seconds, 100 measured local CPU seconds, and 18 simulator calls, with no model calls. UC1/UC2 modes were tested only in declared building-block combinations. All 23 supported cases produced at least one passing simulator witness; all 237 candidate simulations passed. Four UC3 combinations were unsupported at that historical revision, before UC3 integration.
 
 One result was then extended on the same revision and scenario with a separate, higher budget: **UC1 BB3 MAINLINE/FV_STOP increased from 24 trains/hour (volume 12) to 32 trains/hour (volume 16: 7 FV, 6 RV, 3 GV)**. The extended rerun used 45-second per-solve limits, a 900-second measured-CPU cap, a 1,800-second active-wall cap, up to 200 simulator calls, zero model calls, and a 2,400-second outer process timeout. It completed in 901.957 seconds with 901.344 CPU seconds and 22 simulations (9 isolated calibrations plus 13 candidate validations); all 13 candidates passed with zero terminal delay and no detours. The CPU guard is checked between bounded operations, so its reported accounting slightly exceeded the configured cap.
 

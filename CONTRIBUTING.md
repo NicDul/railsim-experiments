@@ -64,3 +64,19 @@ releases are generated automatically from commit messages.
 - Maintainers may request changes, clarification, tests, or documentation updates before merge.
 - Approval does not guarantee merge if new risks are discovered later in review.
 - Rebase or merge from the default branch when requested by maintainers.
+
+## Local Checks
+
+Use a compatible Java 25 runtime and run these commands from the checkout root:
+
+```sh
+./mvnw --batch-mode verify
+export RAILSIM_PROJECT_ROOT="$PWD"
+uv run --locked --extra solver --extra llm python -m unittest discover -s src/test/python -q
+uv run --locked --extra solver python -m unittest discover -s src/test/integration -q
+uv run --locked --extra solver python -m unittest discover -s .github/skills/capacity-research/scripts -p 'test_*.py' -q
+```
+
+The Python tests use local fixtures and mock model providers; no live model
+credentials are required. Keep solver/sweep outputs, simulator state, caches,
+private launch helpers and machine-specific configuration outside git.

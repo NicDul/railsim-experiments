@@ -149,6 +149,8 @@ def clopper_pearson(successes, trials, alpha=0.05):
 
 def validate_flexibility(config):
     config = dict(config)
+    if config.get("use_case", "UC1") not in ("UC1", "UC2"):
+        raise ValueError("entry-order flexibility supports UC1 and UC2 only")
     flex = config.get("flexibility", {})
     if not isinstance(flex, dict) or set(flex) - {
         "exact_ordering_cap",
@@ -397,7 +399,6 @@ class FlexibilityWorkflow:
             3600
             * sum(counts.values())
             / self.config["period_seconds"]
-            * (2 if self.capacity.use_case == "UC2" else 1)
         )
         case = {
             "volume_per_direction": volume if self.capacity.use_case == "UC2" else None,

@@ -29,6 +29,39 @@ ROOT = Path(__file__).resolve().parents[3]
 
 
 class OrderingTests(unittest.TestCase):
+    def test_uc3_capacity_support_does_not_enable_entry_order_flexibility(self):
+        with self.assertRaisesRegex(ValueError, "UC1 and UC2 only"):
+            validate_flexibility({"use_case": "UC3"})
+
+    def test_uc2_hourly_rate_counts_both_directions_once(self):
+        config = {
+            "use_case": "UC2",
+            "building_block": "BB1",
+            "mode": "METRO/BALANCED",
+            "period_seconds": 1800,
+            "volumes": [4],
+            "runner": "none",
+        }
+        source = ROOT / "src/main/resources/scenarios/use_case_2/building_block_1"
+        entries = _entry_resource_by_route(source)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workflow = FlexibilityWorkflow(
+                Settings(ROOT, root / "state"), config, root / "output", ["test"]
+            )
+            workflow._load_or_create()
+            counts = workflow.capacity.mode.composition(4)
+            windows = {
+                route: {entries[route]: (0, 0, 1)} for route in counts
+            }
+            case, _ = workflow._case(
+                {"windows": windows}, 4, {route: [route] for route in counts}
+            )
+        self.assertEqual(sum(case["composition"].values()), 8)
+        self.assertEqual(case["volume_per_direction"], 4)
+        self.assertEqual(case["trains_per_hour"], 16)
+        self.assertEqual(case["total_trains_per_hour"], 16)
+
     def test_small_uc1_volumes_use_native_deterministic_rounding(self):
         mode = UC1Mode.load(
             ROOT / "src/main/resources/scenarios/use_case_1/uc1_operational_plan.json",

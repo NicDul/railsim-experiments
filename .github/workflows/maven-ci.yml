@@ -3,10 +3,10 @@ name: Maven CI
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
 
 permissions:
   contents: read
@@ -27,3 +27,11 @@ jobs:
       - name: Build with Maven
         run: ./mvnw --batch-mode verify --file pom.xml
 
+      - name: Test Python capacity and flexibility
+        env:
+          RAILSIM_PROJECT_ROOT: ${{ github.workspace }}
+        run: |
+          python3 -m pip install uv
+          uv run --locked --extra solver --extra llm python -m unittest discover -s src/test/python -q
+          uv run --locked --extra solver python -m unittest discover -s src/test/integration -q
+          uv run --locked --extra solver python -m unittest discover -s .github/skills/capacity-research/scripts -p 'test_*.py' -q
