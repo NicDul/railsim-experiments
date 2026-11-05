@@ -10,6 +10,8 @@ def replay(workflow, path):
     ref = workflow.calibrate()
     witness = json.loads(path.read_text())
     config = workflow.config
+    if witness.get("use_case", config["use_case"]) != config["use_case"]:
+        raise ValueError("witness domain mismatch: use_case")
     for key in ("building_block", "mode", "period_seconds"):
         if witness.get(key) != config[key]:
             raise ValueError("witness domain mismatch: " + key)
@@ -22,21 +24,31 @@ def replay(workflow, path):
         product, departure, variant = row
         if (
             variant not in ref["variants"]
-            or ref["variants"][variant]["product"] != product
+            or product not in (ref["variants"][variant]["product"], variant)
         ):
             raise ValueError("invalid witness variant")
         if type(departure) is not int or not 0 <= departure < config["period_seconds"]:
             raise ValueError("invalid witness departure")
-    from .uc1_modes import rounded_counts
-
-    if Counter(row[0] for row in pattern) != Counter(
-        rounded_counts(len(pattern), workflow.mode.shares)
+    actual = Counter(
+        ref["variants"][variant]["product"] if workflow.use_case == "UC1" else variant
+        for _, _, variant in pattern
+    )
+    volumes = [len(pattern)] if workflow.use_case == "UC1" else config["volumes"]
+    if not any(
+        actual == Counter(workflow.mode.composition(volume))
+        for volume in volumes
     ):
         raise ValueError("witness composition does not match mode")
+    pattern = sorted(pattern, key=lambda r: (r[1], r[0]))
+    workflow.ws.timeout_seconds = workflow.budget.allowance("simulation", 300)
+    workflow.persist()
     result, _ = workflow.simulator(
         workflow.ws,
         ref["workspace"],
-        sorted(pattern, key=lambda r: (r[1], r[0])),
+        [
+            [ref["variants"][v]["product"], t, v]
+            for _, t, v in pattern
+        ],
         {v: b["terminal"] for v, b in ref["baselines"].items()},
         config["seed"],
         config["period_seconds"],

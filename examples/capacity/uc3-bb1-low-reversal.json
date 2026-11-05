@@ -1,0 +1,22 @@
+{
+  "use_case": "UC3",
+  "building_block": "BB1",
+  "mode": "METRO/LOW_REVERSAL",
+  "period_seconds": 1800,
+  "volume_range": [1, 6, 1],
+  "seed": 4711,
+  "workers": 1,
+  "solver_seconds": 3,
+  "direct_gaps": [1, 0],
+  "resource_no_overlap": true,
+  "guidance": "resources",
+  "rounds": 0,
+  "proposals": 1,
+  "runner": "none",
+  "limits": {
+    "wall_seconds": 240,
+    "cpu_seconds": 100,
+    "simulations": 12,
+    "model_calls": 0
+  }
+}

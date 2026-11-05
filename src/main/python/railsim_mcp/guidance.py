@@ -1,6 +1,7 @@
 """Cyclic resource orders: structural guidance without a common network entry."""
 
 import json
+from .profiles import intervals
 
 
 def catalogue(products, options, windows):
@@ -14,6 +15,12 @@ def catalogue(products, options, windows):
         ambiguous = False
         for token, train in trains.items():
             use = [resource in windows[v] for v in train["variants"]]
+            if any(
+                len(intervals(windows[v][resource])) != 1
+                for v in train["variants"] if resource in windows[v]
+            ):
+                ambiguous = True
+                break
             if any(use) and not all(use):
                 ambiguous = True
                 break

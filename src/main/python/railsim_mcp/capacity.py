@@ -17,7 +17,7 @@ import uuid
 from .configuration import Settings
 from .workspace import ScenarioWorkspace
 from .simulation import add_platform_variants, calibrate, simulate
-from .profiles import reference_windows
+from .profiles import reference_windows, intervals
 from .solver import solve
 from .timetable import replace_timetable
 from .runtime import SIM_JVM_OPTIONS, bounded_process
@@ -36,12 +36,13 @@ def save(path, data):
 
 
 def validate_config(config, *, minimum_volume=4):
-    if config.setdefault("use_case", "UC1") not in ("UC1", "UC2"):
-        raise ValueError("use_case must be UC1 or UC2")
-    if config["use_case"] == "UC2" and config.get("building_block") == "BB3":
-        raise ValueError("UC2 has only BB1 and BB2")
+    if config.setdefault("use_case", "UC1") not in ("UC1", "UC2", "UC3"):
+        raise ValueError("use_case must be UC1, UC2 or UC3")
+    if config["use_case"] in ("UC2", "UC3") and config.get("building_block") == "BB3":
+        raise ValueError(f'{config["use_case"]} has only BB1 and BB2')
     if config.get("building_block") not in ("BB1", "BB2", "BB3"):
-        raise ValueError("only existing UC1 BB1/BB2/BB3 family supported")
+        raise ValueError("building_block must be BB1, BB2 or BB3")
+    volume_low, volume_high = (1, 6) if config["use_case"] == "UC3" else (minimum_volume, 100)
     for name, low, high, default in [
         ("period_seconds", 600, 24000, 1800),
         ("seed", 0, 2147483647, 4711),
@@ -64,11 +65,11 @@ def validate_config(config, *, minimum_volume=4):
             not isinstance(domain, list)
             or len(domain) != 3
             or any(type(n) is not int for n in domain)
-            or not minimum_volume <= domain[0] <= domain[1] <= 100
+            or not volume_low <= domain[0] <= domain[1] <= volume_high
             or domain[2] <= 0
         ):
             raise ValueError(
-                f"volume_range requires [first,last,positive step] in {minimum_volume}..100"
+                f"volume_range requires [first,last,positive step] in {volume_low}..{volume_high}"
             )
         config["volumes"] = list(range(domain[0], domain[1] + 1, domain[2]))
         del config["volume_range"]
@@ -109,11 +110,11 @@ def validate_config(config, *, minimum_volume=4):
     if (
         not isinstance(volumes, list)
         or not volumes
-        or any(type(v) is not int or not minimum_volume <= v <= 100 for v in volumes)
+        or any(type(v) is not int or not volume_low <= v <= volume_high for v in volumes)
     ):
-        raise ValueError(
-            f"volumes must list integer trains per period in {minimum_volume}..100"
-        )
+        raise ValueError(f"volumes must list integer trains per period in {volume_low}..{volume_high}")
+    if config["use_case"] != "UC1" and config.get("guidance") == "entry":
+        raise ValueError("UC2/UC3 require resource guidance, not a common entry order")
     config["volumes"] = sorted(set(volumes))
     if config.setdefault("runner", "none") not in ("none", "fixture", "codex"):
         raise ValueError("runner must be none, fixture or subscription codex")
@@ -156,7 +157,7 @@ def occupation_exclusion(counts, options, windows, period):
         r: sum(
             n
             * min(
-                windows[v].get(r, (0, 0, 0))[2] - windows[v].get(r, (0, 0, 0))[1]
+                sum(end - start for _, start, end in intervals(windows[v].get(r, (0, 0, 0))))
                 for v in options[p]
             )
             for p, n in counts.items()
@@ -273,7 +274,7 @@ class Workflow:
         }
         self.inputs[str(plan_path.relative_to(settings.project))] = digest(plan_path)
         self.topology = None
-        if self.use_case == "UC2":
+        if self.use_case != "UC1":
             from .routing import topology
 
             self.topology = topology(source, self.mode.variants)
@@ -345,11 +346,15 @@ class Workflow:
                     (
                         "UC1 fixed forward routes; one declared mix; binding platforms; entry/exit rerouting markers removed only in workspace."
                         if self.use_case == "UC1"
-                        else "UC2 declared product/flow/direction allocation; original routes/network and rerouting markers unchanged; no platform choice or common entry order assumed."
+                        else f"{self.use_case} declared product/flow/direction allocation; original routes/network and rerouting markers unchanged; no platform choice or common entry order assumed."
                     ),
                     "Integer departures; exclusive isolated windows rounded outward to whole seconds; fixed-profile exclusions concern this surrogate only.",
                     "No holding/recovery in profile model. Simulator gate measures periods 2 and 3 of six repeats; raw positive terminal delay zero; no detours.",
                     "Finite seeded simulation witness, not proof of infinite-horizon feasibility. No simulator-learned constraints used as proof assumptions.",
+                    *(
+                        ["UC3 identical forward/reverse LML mappings mean twice the rounded LML count as complete L-M-L trips, matching StatefulScheduleSampler. Each trip retains one vehicle through the 480s minimum RV turnback dwell; distinct trips use independent vehicles, as in the native sampler. Total trains/hour counts complete route departures, not section crossings or fleet cycles."]
+                        if self.use_case == "UC3" else []
+                    ),
                 ],
             )
         self.budget = Budget(
@@ -450,9 +455,10 @@ class Workflow:
                 self.persist()
         ref["windows"] = reference_windows(self.ws.runs_root, ref["baselines"])
         for windows in ref["windows"].values():
-            for claim, grant, release in windows.values():
-                if not claim <= grant < release:
-                    raise ValueError("invalid isolated profile window")
+            for value in windows.values():
+                for claim, grant, release in intervals(value):
+                    if not claim <= grant < release:
+                        raise ValueError("invalid isolated profile window")
         ref["workspace_hashes"] = {
             p.name: digest(p) for p in root.iterdir() if p.suffix in (".xml", ".json")
         }
@@ -712,7 +718,7 @@ class Workflow:
                 else "solver_first_pass_no_model_needed"
             )
             guidance_kind = self.config.get(
-                "guidance", "resources" if self.use_case == "UC2" else "entry"
+                "guidance", "entry" if self.use_case == "UC1" else "resources"
             )
             eligible = catalogue(products, options, ref["windows"])
             while (
@@ -818,9 +824,13 @@ class Workflow:
                     record["error"] = str(exc)
                 self.persist()
             row["status"] = (
-                "simulator_feasible"
-                if row["witness"]
+                "simulator_feasible" if row["witness"]
+                else "conditional_profile_excluded" if excluded
                 else "unresolved_budget_exhausted"
+                if any(t["status"] == "budget_exhausted" for t in row["trials"])
+                else "execution_failed"
+                if any(t["status"] == "execution_failed" for t in row["trials"])
+                else "unresolved"
             )
             self.persist()
         self.report["bounds"] = assemble(self.report)
@@ -879,7 +889,7 @@ class Workflow:
             + "; period seconds: "
             + str(self.config["period_seconds"])
             + ".\n"
-            "Start from intuition and a small example. profiles.json contains [earliest DLA claim, exclusive grant, exclusive release] in integer seconds after departure. "
+            "Start from intuition and a small example. profiles.json contains [earliest DLA claim, exclusive grant, exclusive release] in integer seconds after departure, or a list of these triples for disjoint visits to the same resource. Visits are not a single envelope. "
             "These are outward-rounded isolated measurements, not an exact universal simulator model. All config, counts, budgets, seeds, hashes, solver statuses, failed trial diagnostics and best passing witnesses are in report.json. "
             "runs/ contains portable frozen inputs, simulator summaries and compressed raw events. manifest.json hashes every included file. Absolute paths in original summaries describe provenance only; use the adjacent files.\n\n"
             "Distinguish simulator witnesses, fixed-profile exclusions, one-order infeasibility, UNKNOWN/timeouts and exhausted search. "

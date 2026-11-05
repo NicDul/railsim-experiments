@@ -172,7 +172,7 @@ def simulate(ws, source, pattern, terminals, seed, period=1800, vehicle_types=No
         for k in (2, 3)
         for i, (p, t, v) in enumerate(pattern)
     }
-    score = evaluate(run, expected, terminals, period)
+    score = evaluate(run, expected, terminals, period, check_routes=True)
     detours = sum(
         1 for e in events(run["events_file"]) if e["type"] == "railsimDetourEvent"
     )

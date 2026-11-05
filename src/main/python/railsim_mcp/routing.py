@@ -1,4 +1,4 @@
-"""Explicit route/flow allocation and topology evidence for UC2 transfer tests."""
+"""Explicit route/flow allocation and topology evidence for UC2 and UC3."""
 
 from collections import Counter
 from dataclasses import dataclass
@@ -29,6 +29,7 @@ class RouteMode:
     flows: dict
     patterns: dict
     bidirectional: bool
+    volume_bounds: tuple = (4, 100)
 
     @classmethod
     def load(cls, path, mode):
@@ -42,6 +43,8 @@ class RouteMode:
             plan["flows"],
             plan["patterns"][pattern]["shares"],
             plan["volumes"]["bidirectional"],
+            (plan["volumes"]["min"], plan["volumes"]["max"])
+            if path.name == "uc3_operational_plan.json" else (4, 100),
         )
 
     @property
@@ -57,14 +60,27 @@ class RouteMode:
                     ["forward", "reverse"] if self.bidirectional else ["forward"]
                 ):
                     route = self.flows[flow]["routes"][product][direction]
+                    mapping = self.flows[flow]["routes"][product]
+                    if self.bidirectional and mapping["forward"] == mapping["reverse"]:
+                        if direction == "reverse":
+                            continue
+                        direction = "one-way"
                     result[route] = dict(
                         product=product, flow=flow, direction=direction, base=route
                     )
         return result
 
     def composition(self, volume):
+        low, high = self.volume_bounds
+        if type(volume) is not int or not low <= volume <= high:
+            raise ValueError(f"volume must be an integer in {low}..{high}")
         result = Counter()
-        for product, n in rounded_counts(volume, self.shares).items():
+        counts = (
+            allocate(volume, self.shares)
+            if self.volume_bounds == (1, 6)
+            else rounded_counts(volume, self.shares)
+        )
+        for product, n in counts.items():
             for flow, count in allocate(n, self.patterns[product]).items():
                 for direction in (
                     ["forward", "reverse"] if self.bidirectional else ["forward"]
@@ -79,15 +95,17 @@ class RouteMode:
             patterns=self.patterns,
             variants=self.variants,
             bidirectional=self.bidirectional,
-            allocation="largest remainder products then flows; same count each direction; volume is per direction",
+            volume_bounds=list(self.volume_bounds),
+            allocation="largest remainder products then flows (lexical flow ties); same count each direction; identical direction routes receive twice the count as complete one-way trips; volume is per-direction allocation, total departures = 2 * volume when bidirectional",
         )
 
 
 def topology(root, variants):
     network = ET.parse(root / "network.xml").getroot()
+    schedule = ET.parse(root / "schedule.xml").getroot()
     routes = {
         r.get("id"): [link.get("refId") for link in r.find("route")]
-        for r in ET.parse(root / "schedule.xml").getroot().iter("transitRoute")
+        for r in schedule.iter("transitRoute")
     }
     attrs = {
         link.get("id"): {a.get("name"): a.text for a in link.iter("attribute")}
@@ -107,6 +125,10 @@ def topology(root, variants):
     common = set.intersection(*used.values())
     return dict(
         routes=routes,
+        route_profiles={
+            r.get("id"): [dict(stop.attrib) for stop in r.find("routeProfile")]
+            for r in schedule.iter("transitRoute") if r.get("id") in variants
+        },
         capacity_one_resources={v: sorted(r) for v, r in used.items()},
         shared_resources=sorted(common),
         entry_markers=sum(a.get("railsimEntry") == "true" for a in attrs.values()),
@@ -114,6 +136,6 @@ def topology(root, variants):
             {r for rs in used.values() for r in rs if r.startswith("platform")}
         ),
         ordered_guidance_supported=False,
-        original_uc1_incompatibility="UC2 has branching bidirectional multi-route flows, multiple entry markers and no platforms; UC1 mode loader and platform/entry assumptions do not apply.",
+        original_uc1_incompatibility="Branching bidirectional multi-route flows and multiple entry markers; UC1 platform/entry assumptions do not apply.",
         adaptation="Keep original network and routes; allocate declared product/flow/direction counts explicitly; direct solver on route groups. Shared-entry order proposals remain unsupported.",
     )
