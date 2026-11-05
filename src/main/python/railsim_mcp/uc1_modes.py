@@ -9,8 +9,8 @@ PRODUCT_ORDER = ('FV','RV','GV')
 
 
 def rounded_counts(volume, shares):
-    if type(volume) is not int or not 4 <= volume <= 100:
-        raise ValueError('volume must be an integer in 4..100')
+    if type(volume) is not int or not 1 <= volume <= 100:
+        raise ValueError('volume must be an integer in 1..100')
     products = [p for p in PRODUCT_ORDER if shares.get(p,0)>0]
     if not products or set(shares)-set(PRODUCT_ORDER):
         raise ValueError('unsupported or empty product mix')

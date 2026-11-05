@@ -152,7 +152,7 @@ def calibrate(ws, workspace, variant, product, seed, period=1800):
     return dict(run_id=run["run_id"], terminal=row["actual_arrival"], detours=detours)
 
 
-def simulate(ws, source, pattern, terminals, seed, period=1800):
+def simulate(ws, source, pattern, terminals, seed, period=1800, vehicle_types=None):
     workspace = "plat-" + uuid.uuid4().hex[:12]
     shutil.copytree(ws.workspace_root / source, ws.workspace_root / workspace)
     departures = [
@@ -160,7 +160,7 @@ def simulate(ws, source, pattern, terminals, seed, period=1800):
             route_id=v,
             departure_id=f"{p}_{i:02}",
             vehicle_id=f"{p}_{i:02}",
-            vehicle_type=p,
+            vehicle_type=(vehicle_types or {}).get(p, p),
             departure_time=stamp(t),
         )
         for i, (p, t, v) in enumerate(pattern)

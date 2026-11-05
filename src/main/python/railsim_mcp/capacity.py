@@ -35,7 +35,7 @@ def save(path, data):
     temp.replace(path)
 
 
-def validate_config(config):
+def validate_config(config, *, minimum_volume=4):
     if config.setdefault("use_case", "UC1") not in ("UC1", "UC2"):
         raise ValueError("use_case must be UC1 or UC2")
     if config["use_case"] == "UC2" and config.get("building_block") == "BB3":
@@ -64,11 +64,11 @@ def validate_config(config):
             not isinstance(domain, list)
             or len(domain) != 3
             or any(type(n) is not int for n in domain)
-            or not 4 <= domain[0] <= domain[1] <= 100
+            or not minimum_volume <= domain[0] <= domain[1] <= 100
             or domain[2] <= 0
         ):
             raise ValueError(
-                "volume_range requires [first,last,positive step] in 4..100"
+                f"volume_range requires [first,last,positive step] in {minimum_volume}..100"
             )
         config["volumes"] = list(range(domain[0], domain[1] + 1, domain[2]))
         del config["volume_range"]
@@ -109,9 +109,11 @@ def validate_config(config):
     if (
         not isinstance(volumes, list)
         or not volumes
-        or any(type(v) is not int or not 4 <= v <= 100 for v in volumes)
+        or any(type(v) is not int or not minimum_volume <= v <= 100 for v in volumes)
     ):
-        raise ValueError("volumes must list integer trains per period in 4..100")
+        raise ValueError(
+            f"volumes must list integer trains per period in {minimum_volume}..100"
+        )
     config["volumes"] = sorted(set(volumes))
     if config.setdefault("runner", "none") not in ("none", "fixture", "codex"):
         raise ValueError("runner must be none, fixture or subscription codex")
@@ -235,9 +237,10 @@ class Workflow:
         solver=solve,
         simulator=simulate,
         model=None,
+        minimum_volume=4,
     ):
         self.settings = settings
-        self.config = validate_config(dict(config))
+        self.config = validate_config(dict(config), minimum_volume=minimum_volume)
         self.out = Path(output).resolve()
         self.out.mkdir(parents=True, exist_ok=True)
         if self.out.is_relative_to(settings.project):
