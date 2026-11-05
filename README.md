@@ -332,6 +332,13 @@ ARGS_ARRAY=(
 ./mvnw exec:java -Dmatsim.log.level=${MATSIM_LOG_LEVEL} -Dexec.args="${ARGS_ARRAY[*]}"
 ```
 
+## UC1 Capacity Search
+
+The local solver-first capacity CLI calibrates profiles, tries exact periodic timetables,
+validates them with the simulator and exports scoped bounds and proof handoff evidence.
+See [the workflow documentation](docs/uc1-capacity-search.md) and
+[retained proof checks](proofs/README.md).
+
 ## Contributing
 
 Please read [CONTRIBUTING.md](CONTRIBUTING.md) for details on how to contribute, and

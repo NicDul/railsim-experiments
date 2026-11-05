@@ -1,0 +1,384 @@
+[
+  {
+    "mode": "fv_pass",
+    "rate": 38,
+    "reference_entry_offsets": {
+      "FV_LR_P1": 213.0,
+      "FV_LR_P2": 213.0,
+      "FV_LR_P3": 213.0,
+      "RV_LMR_P1": 198.0,
+      "RV_LMR_P2": 198.0,
+      "RV_LMR_P3": 198.0,
+      "GV_LR_P1": 372.0,
+      "GV_LR_P2": 372.0,
+      "GV_LR_P3": 372.0
+    },
+    "pattern": [
+      [
+        "FV",
+        0,
+        "FV_LR_P1"
+      ],
+      [
+        "FV",
+        83,
+        "FV_LR_P1"
+      ],
+      [
+        "FV",
+        166,
+        "FV_LR_P1"
+      ],
+      [
+        "FV",
+        249,
+        "FV_LR_P1"
+      ],
+      [
+        "FV",
+        332,
+        "FV_LR_P1"
+      ],
+      [
+        "GV",
+        336,
+        "GV_LR_P1"
+      ],
+      [
+        "FV",
+        415,
+        "FV_LR_P1"
+      ],
+      [
+        "RV",
+        605,
+        "RV_LMR_P2"
+      ],
+      [
+        "FV",
+        675,
+        "FV_LR_P1"
+      ],
+      [
+        "RV",
+        770,
+        "RV_LMR_P1"
+      ],
+      [
+        "RV",
+        856,
+        "RV_LMR_P2"
+      ],
+      [
+        "RV",
+        941,
+        "RV_LMR_P3"
+      ],
+      [
+        "RV",
+        1026,
+        "RV_LMR_P1"
+      ],
+      [
+        "RV",
+        1112,
+        "RV_LMR_P2"
+      ],
+      [
+        "RV",
+        1258,
+        "RV_LMR_P3"
+      ],
+      [
+        "GV",
+        1314,
+        "GV_LR_P1"
+      ],
+      [
+        "FV",
+        1342,
+        "FV_LR_P1"
+      ],
+      [
+        "GV",
+        1414,
+        "GV_LR_P1"
+      ],
+      [
+        "GV",
+        1514,
+        "GV_LR_P1"
+      ]
+    ],
+    "entry_pattern": [
+      [
+        "GV_LR_P1",
+        86.0
+      ],
+      [
+        "FV_LR_P1",
+        213.0
+      ],
+      [
+        "FV_LR_P1",
+        296.0
+      ],
+      [
+        "FV_LR_P1",
+        379.0
+      ],
+      [
+        "FV_LR_P1",
+        462.0
+      ],
+      [
+        "FV_LR_P1",
+        545.0
+      ],
+      [
+        "FV_LR_P1",
+        628.0
+      ],
+      [
+        "GV_LR_P1",
+        708.0
+      ],
+      [
+        "RV_LMR_P2",
+        803.0
+      ],
+      [
+        "FV_LR_P1",
+        888.0
+      ],
+      [
+        "RV_LMR_P1",
+        968.0
+      ],
+      [
+        "RV_LMR_P2",
+        1054.0
+      ],
+      [
+        "RV_LMR_P3",
+        1139.0
+      ],
+      [
+        "RV_LMR_P1",
+        1224.0
+      ],
+      [
+        "RV_LMR_P2",
+        1310.0
+      ],
+      [
+        "RV_LMR_P3",
+        1456.0
+      ],
+      [
+        "FV_LR_P1",
+        1555.0
+      ],
+      [
+        "GV_LR_P1",
+        1686.0
+      ],
+      [
+        "GV_LR_P1",
+        1786.0
+      ]
+    ],
+    "periodic_overlap_count": 0,
+    "overlaps": [],
+    "simulation": {
+      "max_delay": 0,
+      "late": [],
+      "run_id": "e86d5e88-f168-4c27-8a6e-c71c68f358e7",
+      "gap": 0
+    }
+  },
+  {
+    "mode": "fv_stop",
+    "rate": 32,
+    "reference_entry_offsets": {
+      "FV_LMR_P1": 213.0,
+      "FV_LMR_P2": 213.0,
+      "FV_LMR_P3": 213.0,
+      "RV_LMR_P1": 198.0,
+      "RV_LMR_P2": 198.0,
+      "RV_LMR_P3": 198.0,
+      "GV_LR_P1": 372.0,
+      "GV_LR_P2": 372.0,
+      "GV_LR_P3": 372.0
+    },
+    "pattern": [
+      [
+        "FV",
+        0,
+        "FV_LMR_P3"
+      ],
+      [
+        "GV",
+        13,
+        "GV_LR_P1"
+      ],
+      [
+        "GV",
+        205,
+        "GV_LR_P1"
+      ],
+      [
+        "FV",
+        268,
+        "FV_LMR_P2"
+      ],
+      [
+        "RV",
+        475,
+        "RV_LMR_P1"
+      ],
+      [
+        "FV",
+        547,
+        "FV_LMR_P3"
+      ],
+      [
+        "FV",
+        708,
+        "FV_LMR_P1"
+      ],
+      [
+        "FV",
+        807,
+        "FV_LMR_P2"
+      ],
+      [
+        "FV",
+        907,
+        "FV_LMR_P3"
+      ],
+      [
+        "RV",
+        1113,
+        "RV_LMR_P1"
+      ],
+      [
+        "RV",
+        1200,
+        "RV_LMR_P2"
+      ],
+      [
+        "RV",
+        1286,
+        "RV_LMR_P3"
+      ],
+      [
+        "GV",
+        1341,
+        "GV_LR_P3"
+      ],
+      [
+        "FV",
+        1357,
+        "FV_LMR_P1"
+      ],
+      [
+        "RV",
+        1611,
+        "RV_LMR_P2"
+      ],
+      [
+        "RV",
+        1712,
+        "RV_LMR_P1"
+      ]
+    ],
+    "entry_pattern": [
+      [
+        "RV_LMR_P2",
+        9.0
+      ],
+      [
+        "RV_LMR_P1",
+        110.0
+      ],
+      [
+        "FV_LMR_P3",
+        213.0
+      ],
+      [
+        "GV_LR_P1",
+        385.0
+      ],
+      [
+        "FV_LMR_P2",
+        481.0
+      ],
+      [
+        "GV_LR_P1",
+        577.0
+      ],
+      [
+        "RV_LMR_P1",
+        673.0
+      ],
+      [
+        "FV_LMR_P3",
+        760.0
+      ],
+      [
+        "FV_LMR_P1",
+        921.0
+      ],
+      [
+        "FV_LMR_P2",
+        1020.0
+      ],
+      [
+        "FV_LMR_P3",
+        1120.0
+      ],
+      [
+        "RV_LMR_P1",
+        1311.0
+      ],
+      [
+        "RV_LMR_P2",
+        1398.0
+      ],
+      [
+        "RV_LMR_P3",
+        1484.0
+      ],
+      [
+        "FV_LMR_P1",
+        1570.0
+      ],
+      [
+        "GV_LR_P3",
+        1713.0
+      ]
+    ],
+    "periodic_overlap_count": 0,
+    "overlaps": [],
+    "simulation": {
+      "run_id": "46119f39-a5f6-468b-be1a-62e88f4d363c",
+      "passed": true,
+      "max_delay": 0,
+      "total_delay": 0,
+      "errors": [],
+      "missing": 0,
+      "detours": 0,
+      "platform_use": {
+        "RV_LMR_P3": 1,
+        "GV_LR_P1": 2,
+        "RV_LMR_P2": 2,
+        "FV_LMR_P3": 3,
+        "FV_LMR_P2": 2,
+        "GV_LR_P3": 1,
+        "RV_LMR_P1": 3,
+        "FV_LMR_P1": 2
+      }
+    }
+  }
+]

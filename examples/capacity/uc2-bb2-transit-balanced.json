@@ -1,0 +1,16 @@
+{
+  "use_case": "UC2",
+  "building_block": "BB2",
+  "mode": "TRANSIT/BALANCED",
+  "period_seconds": 1800,
+  "volumes": [
+    4,
+    6
+  ],
+  "seed": 4711,
+  "workers": 1,
+  "solver_seconds": 3,
+  "rounds": 0,
+  "proposals": 1,
+  "runner": "none"
+}

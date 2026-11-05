@@ -1,0 +1,20 @@
+{
+  "run_id": "46119f39-a5f6-468b-be1a-62e88f4d363c",
+  "status": "completed",
+  "trains_expected": 96,
+  "trains_departed": 96,
+  "trains_arrived": 96,
+  "trains_not_started": 0,
+  "trains_unfinished": 0,
+  "max_terminal_delay_seconds": 0.0,
+  "delayed_train_count": 0,
+  "headway_conflict_count": 0,
+  "input_sha256": "a91e16944844077666a87293a27ad283353836e8cefc4b7f84fa6ac628fed42f",
+  "input_file_sha256": {
+    "network.xml": "e14b65db53eb84199b2a9f501873ae052497c96c1d62c84bb7f1b7ec1c1519c3",
+    "schedule.xml": "78994d63d004fcbd7dd6efd70106c2735b0ab0d140c016af64cab26b8c73f163",
+    "vehicles.xml": "15e8b0e9ffb01752f4116a32fda79b1a9d77dbe8f9e723cde4ee5c4a7e0ef8ee",
+    "config.xml": "bef2c91ccb11b25cf3205675b02659c176df44361cc44c901607de83aa5dbf41",
+    "uc1_operational_plan.json": "571cec2d927233159c34457e2c7062e1a086ecac0efe1b9ebb2cb5448b92ee17"
+  }
+}

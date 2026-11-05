@@ -1,0 +1,17 @@
+{
+  "building_block": "BB3",
+  "mode": "MAINLINE/FV_STOP",
+  "period_seconds": 1800,
+  "volumes": [
+    4,
+    5,
+    30
+  ],
+  "seed": 4711,
+  "workers": 1,
+  "solver_seconds": 5,
+  "rounds": 1,
+  "proposals": 2,
+  "runner": "fixture",
+  "fixture": "orders.json"
+}
