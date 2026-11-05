@@ -1,10 +1,12 @@
 # Bounded capacity frontier follow-up
 
+For the complete declared UC1/UC2 mode-by-building-block comparison, including the later higher-budget BB3 FV_STOP result, see [capacity mode results](capacity-mode-matrix.md).
+
 This supersedes the initial low-rate smoke checks as evidence of capacity finding. All numbers below are **new search discoveries**; historical witness replay is excluded from the five sweep reports. No global simulator maximum is established.
 
 ## Coverage and measured results
 
-Representative frontier cases: UC1 BB1/BB2 MAINLINE/FV_PASS, UC1 BB3 MAINLINE/FV_STOP, and UC2 BB1/BB2 TRANSIT/TRUNK. Other operating-mode frontiers were not swept. Earlier low-rate coverage of all UC2 modes remains initial feasibility evidence only.
+The five higher-budget frontier cases in this report are UC1 BB1/BB2 MAINLINE/FV_PASS, UC1 BB3 MAINLINE/FV_STOP, and UC2 BB1/BB2 TRANSIT/TRUNK. Other operating modes were not included in this 45-second frontier subset; their separate all-mode bounded coverage is summarized in [capacity mode results](capacity-mode-matrix.md).
 
 Each sweep requests integer volumes 8 through 24 inclusive, period 1,800 s and seed 4711. UC1 rates are total trains/hour (16–48). UC2 volume is **per direction**, so the domain is 32–96 total trains/hour. Exclusions below are tested rounded-composition points in the outward-rounded fixed-profile surrogate; they are not an unrestricted simulator upper bound.
 
