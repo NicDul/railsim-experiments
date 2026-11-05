@@ -12,7 +12,7 @@ origin externally; the preparation timestamp is not the remote capture time.
 ```sh
 uv run --extra solver python -m railsim_mcp.spot_check prepare \
   --source /absolute/snapshot --output /absolute/experiment \
-  --origin 'sbb-calc completed v13/v14 snapshot, capture interval ...' \
+  --origin 'remote completed v13/v14 snapshot, capture interval ...' \
   --volumes 13 14 --count 5 --seed 20261105 --seconds 600 --simulations 10
 ```
 
@@ -27,9 +27,10 @@ records are labelled pilot records.
 Use OR-Tools **9.15.6755**, the original model and compatible Java 25. The solver
 and protected simulator source hashes must match the calibrated identity.
 Build in your own checkout, never in the source run's checkout:
+Set `JAVA_HOME` to your locally installed Java 25 runtime.
 
 ```sh
-export JAVA_HOME=/opt/homebrew/opt/openjdk@25/libexec/openjdk.jdk/Contents/Home
+export JAVA_HOME=/path/to/jdk-25
 export MAVEN_OPTS='-XX:TieredStopAtLevel=1 -XX:+UseSerialGC -XX:ActiveProcessorCount=2 -Xmx2g'
 ./mvnw -q -DskipTests compile dependency:build-classpath \
   -Dmdep.outputFile=/absolute/classpath.txt
@@ -67,3 +68,8 @@ Per-case failures appear in `error.json` and on stderr; `run` returns nonzero.
 Interpret results as conditional fixed-profile evidence only. Server/Mac
 hardware/runtime differences confound claims that time alone caused a changed
 outcome. A longer-budget diagnostic does not change any active sweep timeout.
+
+Keep personal remote-access configuration, hostnames, account names, absolute
+machine paths and server launch helpers outside the repository. Public examples
+use generic provenance; detailed execution provenance and diagnostic outputs
+belong in private local experiment storage, not in git.
