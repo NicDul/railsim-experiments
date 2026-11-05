@@ -22,6 +22,12 @@ simulator outputs must remain outside the checkout. Resume with the same
 configuration, source revision, runtime and output directory. A changed
 identity is rejected rather than silently mixing evidence.
 
+For a small reproducible diagnostic of completed exhaustive records, see
+[local solver and simulator spot checks](spot-checks.md). That tool freezes
+random UNKNOWN and saved-feasible samples, retries only the UNKNOWNs under a
+larger bounded allowance, and replays original witnesses without changing the
+active exhaustive run.
+
 ## Ordering semantics
 
 For UC1, the ordering universe is the multiset of operational product classes
