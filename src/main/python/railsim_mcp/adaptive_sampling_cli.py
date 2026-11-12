@@ -1972,6 +1972,7 @@ def _run_fresh_sweep(args, project, config, output):
                 context = stage_contexts[building_block]
                 block_state = progress["building_blocks"][building_block]
                 sampler = context["sampler"]
+                provider = context["provider"]
                 for case in context["cases"]:
                     case_state = sampler.state["cases"][case.key]
                     point = block_state["points"][str(case.volume)]

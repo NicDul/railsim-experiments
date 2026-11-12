@@ -62,6 +62,7 @@ class FreshRunCliTests(unittest.TestCase):
                 return {
                     "variants": {"FV_P1": {"product": "FV"}},
                     "windows": {},
+                    "building_block": self.config["building_block"],
                 }
 
             def persist(self):
@@ -90,6 +91,9 @@ class FreshRunCliTests(unittest.TestCase):
                 self.max_active_worker_count = 0
                 self.active_worker_process_count = 0
                 self.max_active_worker_process_count = 0
+                self.worker_process_count = (
+                    1 if reference["building_block"] == "BB1" else 2
+                )
                 self.last_batch_requested_by_volume = Counter()
                 self.last_batch_admitted_by_volume = Counter()
                 self.last_batch_completed_by_volume = Counter()
@@ -114,8 +118,11 @@ class FreshRunCliTests(unittest.TestCase):
                         return
                     self.active_worker_count = 1
                     self.max_active_worker_count = 1
-                    self.active_worker_process_count = 1
-                    self.max_active_worker_process_count = 1
+                    self.active_worker_process_count = self.worker_process_count
+                    self.max_active_worker_process_count = max(
+                        self.max_active_worker_process_count,
+                        self.worker_process_count,
+                    )
                     volume = task["case"]["volume"]
                     self.last_batch_admitted_by_volume[volume] += 1
                     self.on_admit(task)
@@ -303,6 +310,18 @@ class FreshRunCliTests(unittest.TestCase):
             )
             self.assertLessEqual(
                 progress["totals"]["max_active_worker_process_count"], 2
+            )
+            self.assertEqual(
+                progress["building_blocks"]["BB1"][
+                    "max_active_worker_process_count"
+                ],
+                1,
+            )
+            self.assertEqual(
+                progress["building_blocks"]["BB2"][
+                    "max_active_worker_process_count"
+                ],
+                2,
             )
             self.assertIn(19, progress["totals"]["worker_nice_values"])
             self.assertTrue((output / "fv-pass-results.md").is_file())
