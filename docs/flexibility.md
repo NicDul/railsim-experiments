@@ -68,6 +68,11 @@ budget exhaustion, failed/rejected candidates and unvalidated schedules are
 unresolved, never no. A finite simulator pass is evidence only for that
 ordering, composition, seed and runtime.
 
+For a predeclared multi-point sample with simultaneous confidence bounds,
+saved-result replay, and a bounded local solver pilot, see
+[adaptive flexibility sampling](adaptive-flexibility.md). That workflow is
+additive; it does not change this fixed-sample flexibility workflow.
+
 The capacity workflow's `limits` object is reused for calibration and
 flexibility analysis. Defaults are 600 CPU seconds, 1,200 wall seconds,
 120 simulator calls and zero model calls. Override the flexibility settings
