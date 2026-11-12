@@ -121,3 +121,40 @@ per-attempt CPU/wall time and calibration cost. The bounded fresh pilot is
 timing evidence only, not a confidence checkpoint. Do not infer the cost of a
 complete fresh run from replay speed; any larger solver run requires separate
 authorization and a measured per-volume projection.
+
+## Bounded BB3 demonstration
+
+A local UC1/BB3 MAINLINE/FV_STOP demonstration sampled the four 1,800-second
+volumes below. The replay labels came from an audited historical fixed-profile
+corpus; that corpus's source identity differs from the current checkout, so its
+rates are a reference comparison, not current-code or simulator results.
+
+| Total trains/hour | Replay stop | Simultaneous sample interval | Audited census bracket |
+| ---: | ---: | ---: | ---: |
+| 26 | 800 draws | 81.66-89.46% | 85.3716% exact |
+| 28 | 1,600 draws | 42.47-50.43% | 46.0206-46.0539% |
+| 30 | 800 draws | 12.30-21.08% | 14.7760-15.3360% |
+| 32 | 100 draws | 0.00-6.78% | 1.3720-1.6051% |
+
+All four intervals contained their supplied census brackets for this seed.
+That single replay is not empirical evidence of 95% coverage. In total it
+checked 3,142 unique orderings across 3,300 draw occurrences, avoiding
+97.03% of the 105,648-order census population. The replay made no solver or
+simulator calls.
+
+A separate current-checkout timing pilot solved three precommitted orders per
+volume (12 total) on macOS arm64 with two Python workers and one CP-SAT worker
+each. It used 34 solver attempts and found no final UNKNOWN results. Feasible
+and conditional-no labels remain fixed-profile solver classifications; no
+pilot witness was simulator-validated. The historical corpus identity and the
+fresh pilot identity are distinct, and the 12/12 post-hoc label matches do not
+establish model equivalence.
+
+For orientation only, applying the pilot's per-volume timings to the replay's
+unique-order demand projects about 6.8 hours of solver wall time with two
+workers (13.3 CPU hours). The observed per-volume min-max extrapolation spans
+0.9-14.6 wall hours and is not a confidence interval: only three orders per
+volume were timed, and observed order cost ranged from about 0.34 to 45.14
+seconds. The portable solver accepts wall-time limits, not deterministic-time
+limits, so its numeric attempt caps are not equivalent to the historical
+deterministic-time budget. No full fresh sweep or server run was performed.
