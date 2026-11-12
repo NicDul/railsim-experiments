@@ -3,10 +3,12 @@
 from collections import Counter
 from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import json
 import math
 import multiprocessing
+import os
 from pathlib import Path
 import random
 import sys
@@ -684,6 +686,9 @@ class AdaptiveSampler:
                     target_width=self.target_width,
                     comparison_points=self.comparison_points,
                 )
+                summary["completed_at_utc"] = datetime.now(
+                    timezone.utc
+                ).isoformat(timespec="seconds")
                 case_state = self.state["cases"][case.key]
                 case_state["checkpoints"].append(summary)
                 case_state["last_complete_checkpoint"] = checkpoint
@@ -1147,6 +1152,8 @@ def _solve_fixed_order(task, windows, variants, period, seed, first_seconds, ret
         "unresolved_reason": unresolved_reason,
         "simulator_calls": 0,
         "deterministic_time_equivalent": False,
+        "worker_pid": os.getpid(),
+        "worker_nice": os.nice(0) if hasattr(os, "nice") else None,
     }
 
 
@@ -1164,12 +1171,14 @@ class LocalFixedProfileSolverProvider:
         retry_seconds=61.96,
         deadline=None,
         active_wall_limit_seconds=900,
+        stop_file=None,
+        on_admit=None,
         model_identity_sha256,
         calibration_sha256,
         on_result=None,
     ):
         if type(workers) is not int or not 1 <= workers <= 2:
-            raise ValueError("local pilot supports one or two worker processes")
+            raise ValueError("local solver supports one or two worker processes")
         if not 0 < first_seconds <= 600 or not 0 < retry_seconds <= 600:
             raise ValueError("solver attempt budgets must be in (0,600]")
         if type(seed) is not int or seed < 0:
@@ -1182,7 +1191,16 @@ class LocalFixedProfileSolverProvider:
         self.retry_seconds = retry_seconds
         self.deadline = deadline
         self.active_wall_limit_seconds = active_wall_limit_seconds
+        self.stop_file = Path(stop_file) if stop_file is not None else None
+        self.on_admit = on_admit
         self.on_result = on_result
+        self.active_worker_count = 0
+        self.max_active_worker_count = 0
+        self.active_worker_process_count = 0
+        self.max_active_worker_process_count = 0
+        self.last_batch_requested_by_volume = Counter()
+        self.last_batch_admitted_by_volume = Counter()
+        self.last_batch_completed_by_volume = Counter()
         self.max_order_wall_seconds = 2 * (
             first_seconds + retry_seconds
         ) + 5.0
@@ -1208,9 +1226,27 @@ class LocalFixedProfileSolverProvider:
             "deterministic_time_equivalent": False,
             "simulator_calls": 0,
         }
+        if self.stop_file is not None:
+            self.identity["stop_policy"] = (
+                "a STOP file prevents new task admission; active solver tasks "
+                "drain and completed results are persisted"
+            )
+
+    def _stop_requested(self):
+        return self.stop_file is not None and self.stop_file.exists()
 
     def evaluate_batch(self, tasks):
         self.last_batch_stop_reason = None
+        if not isinstance(tasks, (list, tuple)):
+            tasks = list(tasks)
+        self.active_worker_count = 0
+        self.active_worker_process_count = 0
+        submitted_in_batch = 0
+        self.last_batch_requested_by_volume = Counter(
+            task["case"]["volume"] for task in tasks
+        )
+        self.last_batch_admitted_by_volume = Counter()
+        self.last_batch_completed_by_volume = Counter()
         if not tasks:
             return
         iterator = iter(tasks)
@@ -1220,6 +1256,10 @@ class LocalFixedProfileSolverProvider:
             max_workers=self.workers, mp_context=context
         ) as executor:
             def submit_next():
+                nonlocal submitted_in_batch
+                if self._stop_requested():
+                    self.last_batch_stop_reason = "stop_requested"
+                    return False
                 try:
                     task = next(iterator)
                 except StopIteration:
@@ -1242,6 +1282,23 @@ class LocalFixedProfileSolverProvider:
                     self.retry_seconds,
                 )
                 active[future] = task
+                submitted_in_batch += 1
+                self.active_worker_process_count = min(
+                    self.workers, submitted_in_batch
+                )
+                self.max_active_worker_process_count = max(
+                    self.max_active_worker_process_count,
+                    self.active_worker_process_count,
+                )
+                self.last_batch_admitted_by_volume[
+                    task["case"]["volume"]
+                ] += 1
+                self.active_worker_count = len(active)
+                self.max_active_worker_count = max(
+                    self.max_active_worker_count, self.active_worker_count
+                )
+                if self.on_admit is not None:
+                    self.on_admit(task)
                 return True
 
             for _ in range(self.workers):
@@ -1251,5 +1308,11 @@ class LocalFixedProfileSolverProvider:
                 completed, _ = wait(active, return_when=FIRST_COMPLETED)
                 for future in completed:
                     task = active.pop(future)
+                    self.active_worker_count = len(active)
+                    self.last_batch_completed_by_volume[
+                        task["case"]["volume"]
+                    ] += 1
                     yield task, future.result()
                     submit_next()
+        self.active_worker_count = 0
+        self.active_worker_process_count = 0

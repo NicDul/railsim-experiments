@@ -7,6 +7,7 @@ from unittest.mock import patch
 from railsim_mcp.adaptive_sampling import (
     DEFAULT_CHECKPOINTS,
     AdaptiveSampler,
+    LocalFixedProfileSolverProvider,
     SavedSolverResultProvider,
     SamplingCase,
     SolverResultSource,
@@ -122,6 +123,24 @@ class SamplingRunTests(unittest.TestCase):
         self.assertEqual(summary["unique_checked"], 1)
         self.assertEqual(summary["draw_outcomes"]["feasible"], 100)
         self.assertEqual(len(provider.calls), 1)
+
+    def test_per_building_block_sampler_keeps_the_51_point_family_allocation(self):
+        case = SamplingCase("one", 1, "entry", {"A": 1})
+        with tempfile.TemporaryDirectory() as tmp:
+            report = AdaptiveSampler(
+                [case],
+                _AlwaysFeasibleProvider(),
+                tmp,
+                seed=11,
+                checkpoints=DEFAULT_CHECKPOINTS,
+                target_width=1,
+                comparison_points=51,
+            ).run()
+        summary = report["cases"][0]["checkpoints"][0]
+        self.assertAlmostEqual(
+            summary["interval"]["per_endpoint_alpha"],
+            0.05 / (2 * 51 * len(DEFAULT_CHECKPOINTS)),
+        )
 
     def test_incomplete_batch_keeps_last_checkpoint_and_resumes_same_stream(self):
         case = SamplingCase("six", 6, "entry", {"A": 3, "B": 3})
@@ -354,6 +373,99 @@ class SavedResultProviderTests(unittest.TestCase):
 
 
 class LocalSolverPolicyTests(unittest.TestCase):
+    def test_stop_file_prevents_new_solver_task_admission(self):
+        task = {
+            "ordering_id": "0123456789abcdef01234567",
+            "case": {"key": "one", "volume": 1},
+            "ordering": {"entry": ["A"]},
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            stop_file = Path(tmp) / "STOP"
+            stop_file.touch()
+            admitted = []
+            provider = LocalFixedProfileSolverProvider(
+                {"windows": {}, "variants": {}},
+                period=1800,
+                workers=1,
+                stop_file=stop_file,
+                on_admit=admitted.append,
+                model_identity_sha256="model",
+                calibration_sha256="calibration",
+            )
+            self.assertEqual(list(provider.evaluate_batch([task])), [])
+        self.assertEqual(provider.last_batch_stop_reason, "stop_requested")
+        self.assertEqual(provider.active_worker_count, 0)
+        self.assertEqual(provider.active_worker_process_count, 0)
+        self.assertEqual(admitted, [])
+
+    def test_stop_drains_admitted_tasks_without_submitting_pending_ones(self):
+        tasks = [
+            {
+                "case": {"key": "one", "volume": 1},
+                "ordering_id": f"{index:024x}",
+                "ordering": {"entry": ["A"]},
+            }
+            for index in range(3)
+        ]
+        submitted = []
+
+        class FakeFuture:
+            def __init__(self, task):
+                self.task = task
+
+            def result(self):
+                return {"outcome": "feasible"}
+
+        class FakeExecutor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def submit(self, _function, task, *_args):
+                submitted.append(task)
+                return FakeFuture(task)
+
+        def finish_one(active, return_when):
+            future = next(iter(active))
+            return {future}, set(active) - {future}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stop_file = Path(tmp) / "STOP"
+            provider = LocalFixedProfileSolverProvider(
+                {"windows": {}, "variants": {}},
+                period=1800,
+                workers=2,
+                stop_file=stop_file,
+                model_identity_sha256="model",
+                calibration_sha256="calibration",
+            )
+            yielded = []
+            with (
+                patch(
+                    "railsim_mcp.adaptive_sampling.ProcessPoolExecutor",
+                    FakeExecutor,
+                ),
+                patch(
+                    "railsim_mcp.adaptive_sampling.wait",
+                    side_effect=finish_one,
+                ),
+            ):
+                for task, _result in provider.evaluate_batch(tasks):
+                    yielded.append(task)
+                    if len(yielded) == 1:
+                        stop_file.touch()
+
+        self.assertEqual(len(submitted), 2)
+        self.assertEqual(len(yielded), 2)
+        self.assertEqual(provider.last_batch_stop_reason, "stop_requested")
+        self.assertEqual(provider.active_worker_count, 0)
+        self.assertEqual(provider.active_worker_process_count, 0)
+
     def test_only_zero_gap_infeasibility_is_a_conditional_no(self):
         task = {
             "ordering_id": "0123456789abcdef01234567",

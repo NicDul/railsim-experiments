@@ -95,7 +95,8 @@ fractions are not inputs to draw generation or stopping; an optional
 small random draw batch, and measures solver calls. It does not read saved
 witnesses, hints, or ordering results, and it does not call the simulator after
 calibration. The CLI caps the pilot at four orders per point and 900 seconds
-active wall time; it does not expose a full fresh adaptive sweep.
+active wall time. This command remains bounded; the separate `fresh-run`
+command below provides the full fresh adaptive sweep.
 
 ```sh
 nice -n 19 uv run --extra solver railsim-adaptive-flexibility fresh-pilot \
@@ -108,6 +109,61 @@ nice -n 19 uv run --extra solver railsim-adaptive-flexibility fresh-pilot \
   --active-wall-limit-seconds 900
 ```
 
+For an explicitly authorized full fresh run, `fresh-run` accepts either one
+building block with a variable-length `volumes` list or a
+`building_blocks`/`volumes_by_building_block` map. The family size is shared
+across every per-building-block sampler; for the declared BB1/BB2/BB3 grid it
+must remain `comparison_points: 51`.
+
+```json
+{
+  "use_case": "UC1",
+  "building_blocks": ["BB1", "BB2", "BB3"],
+  "mode": "MAINLINE/FV_PASS",
+  "period_seconds": 1800,
+  "volumes_by_building_block": {
+    "BB1": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+    "BB2": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18],
+    "BB3": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20]
+  },
+  "seed": 20261112,
+  "solver_seed": 4711,
+  "checkpoints": [100, 200, 400, 800, 1600, 3200, 6400],
+  "alpha": 0.05,
+  "target_width": 0.10,
+  "comparison_points": 51
+}
+```
+
+```sh
+nice -n 19 uv run --extra solver railsim-adaptive-flexibility fresh-run \
+  --project "$PWD" \
+  --state-root /absolute/path/to/fresh-state \
+  --config /absolute/path/to/fresh-sweep.json \
+  --output /absolute/path/to/fresh-sweep
+
+# Request a graceful stop: active solver tasks finish and are checkpointed;
+# no new tasks are admitted. Resume with the same identity after the command exits.
+touch /absolute/path/to/fresh-sweep/STOP
+nice -n 19 uv run --extra solver railsim-adaptive-flexibility fresh-run \
+  --project "$PWD" \
+  --state-root /absolute/path/to/fresh-state \
+  --config /absolute/path/to/fresh-sweep.json \
+  --output /absolute/path/to/fresh-sweep \
+  --resume
+```
+
+`fresh-run` is resumable through its immutable run/stage identities and
+per-order cache. It uses no saved ordering labels or feasibility census,
+calibrates isolated profiles once per building block, and performs no
+simulator calls after calibration. Its worker ceiling is global across the
+sequential BB stages (one CP-SAT thread per worker); unlike `fresh-pilot`, it
+has no 900-second active-wall cap. The default first/retry limits remain
+0.546/61.96 seconds of solver wall time, not deterministic-time equivalents.
+The output contains an atomic `progress.json`, per-BB adaptive state/reports,
+`fv-pass-results.md`, and a line-only `fv-pass-overlay.svg`. Interruption and
+max-checkpoint outcomes remain `precision_not_reached` where appropriate.
+
 Each worker sets `num_search_workers = 1`. The portable solver exposes
 wall-time limits, not deterministic-time limits; therefore the local pilot's
 `0.546s` first attempt and `61.96s` UNKNOWN retry are wall-time alternatives,
@@ -119,8 +175,7 @@ no. Other incomplete or failed solves remain unknown.
 Replay wall time and unique ordering counts are reported separately from fresh
 per-attempt CPU/wall time and calibration cost. The bounded fresh pilot is
 timing evidence only, not a confidence checkpoint. Do not infer the cost of a
-complete fresh run from replay speed; any larger solver run requires separate
-authorization and a measured per-volume projection.
+complete fresh run from replay speed; use measured per-run throughput and ETA.
 
 ## Bounded BB3 demonstration
 
@@ -157,4 +212,5 @@ workers (13.3 CPU hours). The observed per-volume min-max extrapolation spans
 volume were timed, and observed order cost ranged from about 0.34 to 45.14
 seconds. The portable solver accepts wall-time limits, not deterministic-time
 limits, so its numeric attempt caps are not equivalent to the historical
-deterministic-time budget. No full fresh sweep or server run was performed.
+deterministic-time budget. The historical timing pilot did not run a full
+fresh sweep or a server job; the separate `fresh-run` path is documented above.
