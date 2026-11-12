@@ -4,7 +4,8 @@
 simultaneous coverage, including optional stopping, subject to uniform iid
 replacement draws and sound classifications for one unchanged fixed-profile
 model. No complex anytime method is necessary. This is mathematical approval
-of the design, **not implementation signoff or simulator validation**.
+of the design; the pinned implementation signoff is recorded below.
+Neither is simulator validation.
 
 ## Target and endpoints
 
@@ -78,7 +79,7 @@ Maximum absolute tail
 residual was 1.265e-13 (required <= 2e-12). Boundary closed forms agreed
 within 1e-15. R checks of every success count at n = 385, 800, 986, 987,
 1600, 6400 confirmed monotonicity, ordering and reflection symmetry.
-These are reference checks, not checks of the pending replacement code.
+These are design-reference checks; replacement-code checks are recorded below.
 
 Selected reference intervals (a = 1/1120):
 
@@ -148,7 +149,45 @@ Certificate/model errors are outside the statistical error budget.
    [`proportion_ci`](https://docs.scipy.org/doc/scipy/reference/generated/scipy.stats._result_classes.BinomTestResult.proportion_ci.html)
    identifies exact Clopper-Pearson inversion.
 
-No solver/simulator/server runs, source changes, dependency installations or
-fresh saved-record replay were performed for this review. Census totals above
-were supplied, not independently audited. One focused signoff against the
-implementation owner's committed revision remains separate.
+No solver/simulator/server runs, implementation-source changes, dependency
+installations or fresh saved-record replay were performed for this review.
+Census totals above were supplied, not independently audited.
+
+## Committed implementation signoff
+
+**APPROVE**, bounded to implementation revision
+`b11eb985a3e2178fd23e6aca345d1dcb046c063e`. No blocking statistical defect was
+found in `adaptive_sampling.py` or its CLI plan/report wiring.
+
+The replacement uses regularized-beta continued fractions and bracketed
+inversion, explicit zero/all-success boundaries, and reflected upper limits.
+The same 73 endpoint pairs were checked independently against R `qbeta`
+and an 80-digit Decimal direct binomial-tail recurrence: maximum endpoint
+deviation 7.08e-15, maximum absolute tail residual 8.42e-13, both below the
+predeclared 2e-12 tolerance. Sampled-count monotonicity/reflection checks,
+the UNKNOWN sandwich, and the 1/1120 allocation at every declared checkpoint
+also passed. These are numerical checks, not a formal floating-point proof.
+
+All **13 existing focused tests passed** from a temporary snapshot of that
+exact committed tree. Because no solver run was permitted and OR-Tools was
+not installed, only the solver import was replaced by a fail-closed sentinel;
+the existing policy tests used their own mocks. No dependency was installed.
+Additional independent in-memory-provider checks passed for reverse completion
+order, an interrupted multi-point batch producing no premature interval,
+resuming that batch, preserving all 20 repeated UNKNOWN draw occurrences,
+interval [0,1] and `precision_not_reached` for all UNKNOWN, no repeated provider
+calls after completion, and rejection of changed seed/checkpoints/alpha/M.
+The temporary snapshot and all synthetic checkpoint files were removed.
+
+Source inspection confirmed fixed iid prefix regeneration before evaluation,
+deduplicated solver tasks but multiplicity-preserving summaries, a barrier
+across every active point before checkpoint summaries, and persistence of
+the last completed checkpoint on budget interruption. Resumes bind the plan,
+provider and source identities. Saved-source conflicts are rejected; only
+zero-gap INFEASIBLE is classified conditional no. The tiny fixed timing pilot
+reports no confidence interval, including when partially completed.
+
+This signoff relies on sound underlying solver classifications and unchanged
+model identity; it does not independently check saved witnesses, prove
+simulator equivalence, validate real saved-record replay or authorize a larger
+fresh solve sweep. The coordinator retains execution authorization.
